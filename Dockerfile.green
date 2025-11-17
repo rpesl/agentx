@@ -1,0 +1,23 @@
+# Base image
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm
+
+# User setup
+RUN adduser agent
+USER agent
+WORKDIR /home/agent
+
+# Copy project files
+COPY pyproject.toml uv.lock README.md ./
+COPY src src
+COPY scenarios scenarios
+
+# Install dependencies using uv
+RUN --mount=type=cache,target=/home/agent/.cache/uv,uid=1000 \
+    uv sync --locked
+
+# Expose port (default 9009)
+EXPOSE 9009
+
+# Command to start server (host/port can be overridden)
+ENTRYPOINT ["uv", "run", "scenarios/socbench/green.py"]
+CMD ["--host", "0.0.0.0", "--port", "9009"]

@@ -2,10 +2,7 @@ import sys
 import json
 import asyncio
 from pathlib import Path
-from typing import Any, Dict
-
 import tomllib
-
 from agentbeats.client import send_message
 from agentbeats.models import EvalRequest
 from a2a.types import (
@@ -13,8 +10,6 @@ from a2a.types import (
     Message,
     TaskStatusUpdateEvent,
     TaskArtifactUpdateEvent,
-    TaskState,
-    Part,
     TextPart,
     DataPart,
 )
@@ -63,7 +58,6 @@ def print_parts(parts, task_state: str | None = None):
         output.append("\n".join(text_parts))
     if data_parts:
         output.extend(json.dumps(item, indent=2) for item in data_parts)
-
     print("\n".join(output) + "\n")
 
 async def event_consumer(event, card: AgentCard):
