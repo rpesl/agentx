@@ -1,6 +1,6 @@
 import ast
-from socbenchsc.models import Unknown
-from socbenchsc.node_visitor import AnalysisVisitor
+from .models import Unknown
+from .node_visitor import AnalysisVisitor
 from urllib.parse import urlparse
 
 

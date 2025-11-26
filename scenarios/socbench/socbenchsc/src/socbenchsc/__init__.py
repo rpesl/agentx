@@ -1,1 +1,1 @@
-from socbenchsc.analysis import Analysis
+from .analysis import Analysis

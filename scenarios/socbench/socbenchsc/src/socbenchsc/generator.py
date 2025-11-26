@@ -1,7 +1,7 @@
 import ast
 import logging
-from socbenchsc.value_handler import ValueHandler
-from socbenchsc.models import Function, Variable, List, Dict, Constant, UNKNOWN
+from .value_handler import ValueHandler
+from .models import Function, Variable, List, Dict, Constant, UNKNOWN
 
 
 def kill_targets(target) -> list[str] | str:

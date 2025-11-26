@@ -1,7 +1,6 @@
 # TODO: Adapt for SOCBench
 
 from pydantic import BaseModel
-from typing import Literal
 
 from a2a.types import (
     AgentCapabilities,
@@ -11,33 +10,27 @@ from a2a.types import (
 
 
 class DebaterScore(BaseModel):
-    emotional_appeal: float
-    argument_clarity: float
-    argument_arrangement: float
-    relevance_to_topic: float
-    total_score: float
+    recall: float
+
 
 class DebateEval(BaseModel):
-    pro_debater: DebaterScore
-    con_debater: DebaterScore
-    winner: Literal["pro_debater", "con_debater"]
-    reason: str
+    participants: dict[str, DebaterScore]
+    winner: str
 
 
-def debate_judge_agent_card(agent_name: str, card_url: str) -> AgentCard:
+def judge_agent_card(agent_name: str, card_url: str) -> AgentCard:
     skill = AgentSkill(
-        id='moderate_and_judge_debate',
-        name='Orchestrates and judges debate',
-        description='Orchestrate and judge a debate between two agents on a given topic.',
-        tags=['debate'],
+        id='judge_code_generation',
+        name='Judges generated code',
+        description='Judge generated code from multiple agents on a given query.',
+        tags=['code generation'],
         examples=["""
 {
   "participants": {
-    "pro_debater": "https://pro-debater.example.com:443",
-    "con_debater": "https://con-debater.example.org:8443"
+    "PurpleAgent_1": "https://purpleagent_1.example.com:443",
+    "PurpleAgent_2": "https://purpleagent_2.example.org:8443"
   },
   "config": {
-    "topic": "Should artificial intelligence be regulated?",
     "num_rounds": 3
   }
 }
@@ -45,7 +38,7 @@ def debate_judge_agent_card(agent_name: str, card_url: str) -> AgentCard:
     )
     agent_card = AgentCard(
         name=agent_name,
-        description='Orchestrate and judge a structured debate between pro and con agents on a given topic with multiple rounds of arguments.',
+        description='Judge generated code from multiple agents on a given query with multiple rounds of code generation.',
         url=card_url,
         version='1.0.0',
         default_input_modes=['text'],

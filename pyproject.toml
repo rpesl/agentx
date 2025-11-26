@@ -10,11 +10,15 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "a2a-sdk>=0.3.5",
+    "analysis>=0.1.7",
     "google-adk>=1.14.1",
     "google-genai>=1.36.0",
+    "openai>=2.8.1",
     "pydantic>=2.11.9",
+    "pytest>=9.0.1",
     "python-dotenv>=1.1.1",
     "uvicorn>=0.35.0",
+    "v1>=0.12.3",
 ]
 
 [project.scripts]

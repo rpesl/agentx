@@ -1,8 +1,8 @@
 import ast
 import logging
-from socbenchsc.value_handler import ValueHandler
-from socbenchsc.models import Function, Variable, RequestImport
-from socbenchsc.generator import generate, add_value
+from .value_handler import ValueHandler
+from .models import Function, Variable, RequestImport
+from .generator import generate, add_value
 
 
 class AnalysisVisitor(ast.NodeVisitor):

@@ -1,7 +1,7 @@
 import itertools
 import ast
 import logging
-from socbenchsc.models import Constant, Function, FunctionCall, Unknown, Variable, List, Dict, RequestImport, UNKNOWN
+from .models import Constant, Function, FunctionCall, Unknown, Variable, List, Dict, RequestImport, UNKNOWN
 
 
 class ValueHandler:
