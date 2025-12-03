@@ -1,12 +1,12 @@
 import argparse
 import contextlib
-import os, json
-import random
 import uvicorn
 import asyncio
 import logging
 from dotenv import load_dotenv
-from openai import OpenAI
+from metric_evaluator import MetricEvaluator
+from code_generator import CodeGenerator
+from openapi_loader import OpenAPILoader
 from socbenchsc.src.socbenchsc.analysis import Analysis
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -17,7 +17,8 @@ from a2a.utils import (new_agent_text_message)
 from agentbeats.green_executor import GreenAgent, GreenExecutor
 from agentbeats.models import EvalRequest, EvalResult
 from agentbeats.tool_provider import ToolProvider
-from models import DebateEval, judge_agent_card, DebaterScore
+from models import CodeEval, judge_agent_card, CodeScore
+from endpoint_normalizer import normalize_endpoint
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -29,27 +30,15 @@ domains = ["01-energy", "02-materials", "03-industrials", "04-consumer discretio
            "10-utilities", "11-real estate"]
 
 
-def run_openai_query(prompt: str) -> str:
-    api_key = os.getenv("NEBIUS_API_KEY")
-    client = OpenAI(base_url="https://api.tokenfactory.nebius.com/v1/", api_key=api_key)
-    response = client.chat.completions.create(
-        model="moonshotai/Kimi-K2-Instruct",
-        messages=[
-            {"role": "system", "content": "You are a code generation assistant."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-    generated_code = response.choices[0].message.content
-    return generated_code
-
-
-class DebateJudge(GreenAgent):
+class CodeJudge(GreenAgent):
     def __init__(self, num_agents=2):
         self._required_roles = [f"PurpleAgent_{i}" for i in
                                 range(num_agents)]
         self._required_config_keys = ["num_rounds"]
         self._tool_provider = ToolProvider()
         self.expected_endpoints = []
+        self.openapi_loader = OpenAPILoader(benchmark_root)
+        self.code_generator = CodeGenerator()
 
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
         missing_roles = set(self._required_roles) - set(request.participants.keys())
@@ -74,7 +63,7 @@ class DebateJudge(GreenAgent):
             await updater.update_status(TaskState.working, new_agent_text_message(
                 f"Code creation orchestration finished. Starting evaluation."))
             logger.info("Code creation orchestration finished. Evaluating code.")
-            code_eval: DebateEval = await self.judge_code(code, updater)
+            code_eval: CodeEval = await self.judge_code(code, updater)
             logger.info(f"Code Evaluation:\n{code_eval.model_dump_json()}")
 
             result = EvalResult(winner=code_eval.winner, detail=code_eval.model_dump())
@@ -87,40 +76,6 @@ class DebateJudge(GreenAgent):
         finally:
             self._tool_provider.reset()
 
-    @staticmethod
-    def load_openapi_specs(domain_path: str) -> list[dict]:
-        openapis = []
-        for entry in os.listdir(domain_path):
-            service_path = os.path.join(domain_path, entry)
-            if os.path.isdir(service_path):
-                openapi_file = os.path.join(service_path, "openapi.json")
-                if os.path.exists(openapi_file):
-                    with open(openapi_file, "r") as file:
-                        openapis.append(json.load(file))
-        return openapis
-
-    @staticmethod
-    def load_query(domain_path: str) -> tuple[str, list[str]]:
-        query_file = os.path.join(domain_path, "queries.json")
-        with open(query_file, "r") as file:
-            query_data = json.load(file)
-        query = random.choice(query_data["queries"])
-        return query["query"], query["endpoints"]
-
-    @staticmethod
-    async def generate_code_for_query(role: str, openapis: list[dict], query_text: str, updater: TaskUpdater,
-                                      dictionary: dict) -> str:
-        prompt = f"""
-        You are a code generation agent. Your task is to generate Python code that answers the following query using the provided OpenAPI specifications.
-        Query: {query_text}
-        OpenAPI Specifications: {json.dumps(openapis)}
-        Please only provide the Python code without any explanations or additional text. Do not include markdown formatting. 
-        """
-        generated_code = run_openai_query(prompt)
-        dictionary[role].append(generated_code)
-        await updater.update_status(TaskState.working, new_agent_text_message(f"{role}: {generated_code}"))  # debugging
-        return generated_code
-
     async def orchestrate_code_creation(
             self,
             participants: dict[str, str],
@@ -130,56 +85,62 @@ class DebateJudge(GreenAgent):
 
         dictionary = {role: [] for role in participants.keys()}
         self.expected_endpoints = []
-        for round_id in range(num_rounds):
-            instance_id = random.randint(1, 5)  # or round_id % 5 + 1 for determinism
-            domain = random.choice(domains)  # or domains[round_id % len(domains)] for determinism
-            domain_path = os.path.join(benchmark_root, f"socbenchd_{instance_id}", domain)
+        logger.info(f"Orchestrating code creation for {num_rounds} rounds.")
 
-            openapis = self.load_openapi_specs(domain_path)
+        for round_id in range(num_rounds):
+            domain_path = self.openapi_loader.get_random_domain_path(domains)
+            openapis = self.openapi_loader.load_openapi_specs(domain_path)
             await updater.update_status(TaskState.working, new_agent_text_message(
                 f"[Round {round_id + 1}] loaded {len(openapis)} OpenAPI specifications."))
 
-            query_text, endpoints = self.load_query(domain_path)
+            query_text, endpoints = self.openapi_loader.load_query(domain_path)
             self.expected_endpoints.append(endpoints)
             await updater.update_status(TaskState.working, new_agent_text_message(
                 f"[Round {round_id + 1}] selected query: {query_text}"))
 
             for role in participants.keys():
-                await self.generate_code_for_query(role, openapis, query_text, updater, dictionary)
+                await self.code_generator.generate_code_for_query(role, openapis, query_text, updater, dictionary)
 
         return dictionary
 
-    @staticmethod
-    def compute_recall(retrieved_endpoints: set[str], expected_endpoints: list[str]) -> float:
-        if not expected_endpoints:
-            return 0.0
-        true_positives = len(retrieved_endpoints.intersection(set(expected_endpoints)))
-        recall = true_positives / len(expected_endpoints)
-        return recall
+    async def judge_code(self, code_text: dict[str, list[str]], updater=TaskUpdater) -> CodeEval:
 
-    async def judge_code(self, debate_text: dict[str, list[str]], updater=TaskUpdater) -> DebateEval:
+        intermediate_results = {role: {"recall": [], "precision": [], "f1": []} for role in code_text.keys()}
 
-        intermediate_results: dict[str, list[float]] = {role: [] for role in debate_text.keys()}
-
-        for agent, generated_codes in debate_text.items():
+        for agent, generated_codes in code_text.items():
             for round_index, code in enumerate(generated_codes):
                 analysis = Analysis(code)
                 retrieved_endpoints = analysis.perform_analysis()
                 await updater.update_status(TaskState.working, new_agent_text_message(
                     f"Analysis for {agent} in round {round_index + 1}: Retrieved endpoints: {retrieved_endpoints}"))  # debugging
-                recall = self.compute_recall(retrieved_endpoints, self.expected_endpoints[round_index])
-                intermediate_results[agent].append(recall)
+                normalized_retrieved = {normalize_endpoint(ep) for ep in retrieved_endpoints}
+                normalized_expected = [normalize_endpoint(ep) for ep in self.expected_endpoints[round_index]]
+                await updater.update_status(TaskState.working, new_agent_text_message(
+                    f"Normalized for {agent} in round {round_index + 1}: Retrieved: {normalized_retrieved}, Expected: {normalized_expected}"))  # debugging
 
-        avg_results = {agent: sum(scores) / len(scores) if scores else 0.0 for agent, scores in
-                       intermediate_results.items()}
+                recall = MetricEvaluator.compute_recall(normalized_retrieved, normalized_expected)
+                precision = MetricEvaluator.compute_precision(normalized_retrieved, normalized_expected)
+                f1 = MetricEvaluator.compute_f1(precision, recall)
+                intermediate_results[agent]["recall"].append(recall)
+                intermediate_results[agent]["precision"].append(precision)
+                intermediate_results[agent]["f1"].append(f1)
 
-        max_agent = max(avg_results, key=avg_results.get)
-        participants_recalls = {agent: DebaterScore(recall=avg_results[agent]) for agent in avg_results}
-        debate_eval = DebateEval(
+        avg_results = {}
+        for agent, metrics in intermediate_results.items():
+            avg_results[agent] = {
+                "recall": sum(metrics["recall"]) / len(metrics["recall"]) if metrics["recall"] else 0.0,
+                "precision": sum(metrics["precision"]) / len(metrics["precision"]) if metrics["precision"] else 0.0,
+                "f1": sum(metrics["f1"]) / len(metrics["f1"]) if metrics["f1"] else 0.0,
+            }
+        max_agent = max(avg_results, key=lambda a: avg_results[a]["f1"])
+        participants_recalls = {agent: CodeScore(recall=avg_results[agent]["recall"],
+                                                 precision=avg_results[agent]["precision"],
+                                                 f1=avg_results[agent]["f1"]) for agent in avg_results.keys()}
+        code_eval = CodeEval(
             participants=participants_recalls,
-            winner="The winner is " + max_agent + " with an average recall of " + f"{avg_results[max_agent]:.2f}."
+            winner="The winner is " + max_agent + " with an F1 score of " + f"{avg_results[max_agent]['f1']:.2f}."
         )
-        return debate_eval
+        return code_eval
 
 
 async def main():
@@ -198,9 +159,9 @@ async def main():
         agent_url_cm = contextlib.nullcontext(args.card_url or f"http://{args.host}:{args.port}/")
 
     async with agent_url_cm as agent_url:
-        agent = DebateJudge()
+        agent = CodeJudge()
         executor = GreenExecutor(agent)
-        agent_card = judge_agent_card("DebateJudge", agent_url)
+        agent_card = judge_agent_card("CodeJudge", agent_url)
         request_handler = DefaultRequestHandler(
             agent_executor=executor,
             task_store=InMemoryTaskStore(),

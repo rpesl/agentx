@@ -18,5 +18,4 @@ endpoint = "http://127.0.0.1:9020"
 cmd = "python scenarios/socbench/purple.py --host 127.0.0.1 --port 9020"
 
 [config]
-num_rounds = 3
-
+num_rounds = 1
