@@ -14,10 +14,8 @@ class CodeGenerator:
 
     @staticmethod
     def clean_generated_code(text: str) -> str:
-        text = text.encode("ascii", "ignore").decode() # Remove non ASCII characters
-
-
-        code_blocks = re.findall(r"```(?:[\w+-]*)?\n(.*?)```", text, re.DOTALL) # Extract code blocks from markdown
+        text = text.encode("ascii", "ignore").decode()
+        code_blocks = re.findall(r"```(?:[\w+-]*)?\n(.*?)```", text, re.DOTALL)
         if code_blocks:
             filtered_blocks = [
                 block.strip() for block in code_blocks
@@ -44,7 +42,7 @@ class CodeGenerator:
         generated_code = response.choices[0].message.content
         return self.clean_generated_code(generated_code)
 
-    async def generate_code_for_query(self, role: str, openapis: list[dict], query_text: str,
+    async def generate_code_for_query(self, role: str, scenario: str, openapis: list[dict], query_text: str,
                                       updater: TaskUpdater, dictionary: dict) -> str:
         prompt = f"""
         You are a code generation agent. Generate Python code for the following query using the OpenAPI specs.
@@ -52,6 +50,23 @@ class CodeGenerator:
         OpenAPI Specifications: {json.dumps(openapis)}
         """
         generated_code = self.run_openai_query(prompt)
-        dictionary[role].append(generated_code)
-        await updater.update_status(TaskState.working, new_agent_text_message(f"{role}: {generated_code}"))
+        dictionary[role][scenario].append(generated_code)
+        await updater.update_status(TaskState.working, new_agent_text_message(f"[{role}][{scenario}]: {generated_code}"))
         return generated_code
+
+    async def confirm_endpoints(
+            self, role: str, scenario: str, expected_endpoints: list[str],
+            updater: TaskUpdater
+    ) -> str:
+
+        endpoints_json = json.dumps(expected_endpoints)
+        prompt = f"""
+        You generated code for a query. Please confirm:
+        Are these the normalized endpoints you intended to cover? {endpoints_json}
+        Respond with 'Yes' or 'No' and explain.
+        """
+
+        confirmation = self.run_openai_query(prompt)
+
+
+        return confirmation

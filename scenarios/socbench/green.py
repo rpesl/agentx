@@ -4,9 +4,10 @@ import uvicorn
 import asyncio
 import logging
 from dotenv import load_dotenv
-from metric_evaluator import MetricEvaluator
+from endpoint_evaluator import normalize_endpoint, normalize_expected_endpoint, match_retrieved_to_expected, compute_f1
 from code_generator import CodeGenerator
 from openapi_loader import OpenAPILoader
+from scenarios import run_scenario_hard, run_scenario_medium
 from socbenchsc.src.socbenchsc.analysis import Analysis
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -18,17 +19,16 @@ from agentbeats.green_executor import GreenAgent, GreenExecutor
 from agentbeats.models import EvalRequest, EvalResult
 from agentbeats.tool_provider import ToolProvider
 from models import CodeEval, judge_agent_card, CodeScore
-from endpoint_normalizer import normalize_endpoint
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("evaluation_agent")
 
-benchmark_root = "scenarios/socbench/benchmark"
-domains = ["01-energy", "02-materials", "03-industrials", "04-consumer discretionary", "05-consumer staples",
+BENCHMARK_ROOT = "scenarios/socbench/benchmark"
+DOMAINS = ["01-energy", "02-materials", "03-industrials", "04-consumer discretionary", "05-consumer staples",
            "06-health care", "07-financials", "08-information technology", "09-communication services",
            "10-utilities", "11-real estate"]
-
+SCENARIOS = ["medium", "hard"]
 
 class CodeJudge(GreenAgent):
     def __init__(self, num_agents=2):
@@ -37,7 +37,7 @@ class CodeJudge(GreenAgent):
         self._required_config_keys = ["num_rounds"]
         self._tool_provider = ToolProvider()
         self.expected_endpoints = []
-        self.openapi_loader = OpenAPILoader(benchmark_root)
+        self.openapi_loader = OpenAPILoader(BENCHMARK_ROOT)
         self.code_generator = CodeGenerator()
 
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
@@ -76,71 +76,96 @@ class CodeJudge(GreenAgent):
         finally:
             self._tool_provider.reset()
 
+
     async def orchestrate_code_creation(
             self,
             participants: dict[str, str],
             num_rounds: int,
             updater: TaskUpdater,
-    ) -> dict[str, list[str]]:
+    ) -> dict[str, dict[str, list[str]]]:
 
-        dictionary = {role: [] for role in participants.keys()}
+
+        dictionary = {role: {scenario: [] for scenario in SCENARIOS}
+                                            for role in participants.keys()}
         self.expected_endpoints = []
         logger.info(f"Orchestrating code creation for {num_rounds} rounds.")
 
         for round_id in range(num_rounds):
-            domain_path = self.openapi_loader.get_random_domain_path(domains)
+            domain_path = self.openapi_loader.get_random_domain_path(DOMAINS)
             openapis = self.openapi_loader.load_openapi_specs(domain_path)
-            await updater.update_status(TaskState.working, new_agent_text_message(
-                f"[Round {round_id + 1}] loaded {len(openapis)} OpenAPI specifications."))
-
             query_text, endpoints = self.openapi_loader.load_query(domain_path)
             self.expected_endpoints.append(endpoints)
             await updater.update_status(TaskState.working, new_agent_text_message(
                 f"[Round {round_id + 1}] selected query: {query_text}"))
-
             for role in participants.keys():
-                await self.code_generator.generate_code_for_query(role, openapis, query_text, updater, dictionary)
+             for scenario in SCENARIOS:
+                if scenario == "medium":
+                   result_medium = await run_scenario_medium(self, role, "medium", openapis, query_text, updater, dictionary)
+                   dictionary[role]["medium"].append(result_medium)
+                else:
+                   result_hard = await run_scenario_hard(self, role, "hard", openapis, query_text, updater, dictionary)
+                   dictionary[role]["hard"].append(result_hard)
 
         return dictionary
 
-    async def judge_code(self, code_text: dict[str, list[str]], updater=TaskUpdater) -> CodeEval:
+    async def judge_code(self, code_dict: dict[str, dict[str, list[str]]], updater:TaskUpdater) -> CodeEval:
 
-        intermediate_results = {role: {"recall": [], "precision": [], "f1": []} for role in code_text.keys()}
+        scenario_results = {scenario: {} for scenario in SCENARIOS}
+        num_rounds = len(self.expected_endpoints)
 
-        for agent, generated_codes in code_text.items():
-            for round_index, code in enumerate(generated_codes):
-                analysis = Analysis(code)
-                retrieved_endpoints = analysis.perform_analysis()
-                await updater.update_status(TaskState.working, new_agent_text_message(
-                    f"Analysis for {agent} in round {round_index + 1}: Retrieved endpoints: {retrieved_endpoints}"))  # debugging
-                normalized_retrieved = {normalize_endpoint(ep) for ep in retrieved_endpoints}
-                normalized_expected = [normalize_endpoint(ep) for ep in self.expected_endpoints[round_index]]
-                await updater.update_status(TaskState.working, new_agent_text_message(
-                    f"Normalized for {agent} in round {round_index + 1}: Retrieved: {normalized_retrieved}, Expected: {normalized_expected}"))  # debugging
+        for scenario in SCENARIOS:
+            intermediate_results = {agent: {"recall": [], "precision": [], "f1": []} for agent in code_dict}
+            for round_idx in range(num_rounds):
+                expected = self.expected_endpoints[round_idx]
 
-                recall = MetricEvaluator.compute_recall(normalized_retrieved, normalized_expected)
-                precision = MetricEvaluator.compute_precision(normalized_retrieved, normalized_expected)
-                f1 = MetricEvaluator.compute_f1(precision, recall)
-                intermediate_results[agent]["recall"].append(recall)
-                intermediate_results[agent]["precision"].append(precision)
-                intermediate_results[agent]["f1"].append(f1)
+                for agent in code_dict:
+                    code = code_dict[agent][scenario][round_idx]
+                    analysis = Analysis(code)
+                    retrieved = analysis.perform_analysis()
 
-        avg_results = {}
-        for agent, metrics in intermediate_results.items():
-            avg_results[agent] = {
-                "recall": sum(metrics["recall"]) / len(metrics["recall"]) if metrics["recall"] else 0.0,
-                "precision": sum(metrics["precision"]) / len(metrics["precision"]) if metrics["precision"] else 0.0,
-                "f1": sum(metrics["f1"]) / len(metrics["f1"]) if metrics["f1"] else 0.0,
-            }
-        max_agent = max(avg_results, key=lambda a: avg_results[a]["f1"])
-        participants_recalls = {agent: CodeScore(recall=avg_results[agent]["recall"],
-                                                 precision=avg_results[agent]["precision"],
-                                                 f1=avg_results[agent]["f1"]) for agent in avg_results.keys()}
-        code_eval = CodeEval(
-            participants=participants_recalls,
-            winner="The winner is " + max_agent + " with an F1 score of " + f"{avg_results[max_agent]['f1']:.2f}."
+                    normalized_retrieved = {normalize_endpoint(ep) for ep in retrieved}
+                    normalized_expected = [normalize_expected_endpoint(ep) for ep in expected]
+
+                    matched = match_retrieved_to_expected(normalized_retrieved, normalized_expected)
+                    recall = round(len(matched) / len(normalized_expected), 2) if normalized_expected else 0.0
+                    precision = round(len(matched) / len(normalized_retrieved), 2) if normalized_retrieved else 0.0
+                    f1 = compute_f1(precision, recall)
+                    await updater.update_status(TaskState.working, new_agent_text_message(
+                        f"Agent {agent} - Round {round_idx + 1} - Scenario {scenario}:\n"
+                        f"Retrieved endpoints: {retrieved}\n"
+                        f"Matched endpoints: {matched}\n"
+                        f"Recall: {recall}, Precision: {precision}, F1: {f1}"))
+
+                    intermediate_results[agent]["recall"].append(recall)
+                    intermediate_results[agent]["precision"].append(precision)
+                    intermediate_results[agent]["f1"].append(f1)
+
+
+            for agent, metrics in intermediate_results.items():
+                scenario_results[scenario][agent] = {
+                    "recall": sum(metrics["recall"]) / len(metrics["recall"]),
+                    "precision": sum(metrics["precision"]) / len(metrics["precision"]),
+                    "f1": sum(metrics["f1"]) / len(metrics["f1"]),
+                }
+
+        final_recall_scores = {
+            agent: round(sum(scenario_results[sc][agent]["recall"] for sc in SCENARIOS) / len(SCENARIOS), 2)
+            for agent in code_dict
+        }
+
+        winner = max(final_recall_scores, key=final_recall_scores.get)
+
+        return CodeEval(
+            participants={
+                agent: CodeScore(
+                    recall=round(sum(scenario_results[sc][agent]["recall"] for sc in SCENARIOS) / len(SCENARIOS), 2),
+                    precision=round(sum(scenario_results[sc][agent]["precision"] for sc in SCENARIOS) / len(SCENARIOS), 2),
+                    f1=round(sum(scenario_results[sc][agent]["f1"] for sc in SCENARIOS) / len(SCENARIOS), 2)
+                )
+                for agent in code_dict
+            },
+            winner=f"Winner: {winner} (combined Recall = {final_recall_scores[winner]})"
         )
-        return code_eval
 
 
 async def main():
