@@ -2,10 +2,7 @@ import sys
 import json
 import asyncio
 from pathlib import Path
-from typing import Any, Dict
-
 import tomllib
-
 from agentbeats.client import send_message
 from agentbeats.models import EvalRequest
 from a2a.types import (

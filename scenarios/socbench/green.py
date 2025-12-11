@@ -4,42 +4,41 @@ import uvicorn
 import asyncio
 import logging
 from dotenv import load_dotenv
-from pydantic import BaseModel
-from typing import Literal
-
-load_dotenv()
-
-from google import genai
+from endpoint_evaluator import normalize_endpoint, normalize_expected_endpoint, match_retrieved_to_expected, compute_f1
+from code_generator import CodeGenerator
+from openapi_loader import OpenAPILoader
+from scenarios import run_scenario_hard, run_scenario_medium
+from socbenchsc.src.socbenchsc.analysis import Analysis
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.server.tasks import TaskUpdater
-from a2a.types import (
-    TaskState,
-    Part,
-    TextPart,
-)
-from a2a.utils import (
-    new_agent_text_message
-)
-
+from a2a.types import (TaskState, Part, TextPart)
+from a2a.utils import (new_agent_text_message)
 from agentbeats.green_executor import GreenAgent, GreenExecutor
 from agentbeats.models import EvalRequest, EvalResult
 from agentbeats.tool_provider import ToolProvider
+from models import CodeEval, judge_agent_card, CodeScore
 
-from scenarios.socbench.models import DebateEval, debate_judge_agent_card
-
-
+load_dotenv()
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("debate_judge")
+logger = logging.getLogger("evaluation_agent")
 
+BENCHMARK_ROOT = "scenarios/socbench/benchmark"
+DOMAINS = ["01-energy", "02-materials", "03-industrials", "04-consumer discretionary", "05-consumer staples",
+           "06-health care", "07-financials", "08-information technology", "09-communication services",
+           "10-utilities", "11-real estate"]
+SCENARIOS = ["medium", "hard"]
 
-class DebateJudge(GreenAgent):
-    def __init__(self):
-        self._required_roles = ["pro_debater", "con_debater"] # TODO: Adapt for arbitrary number of agents
-        self._required_config_keys = ["topic", "num_rounds"]
-        self._client = genai.Client()
+class CodeJudge(GreenAgent):
+    def __init__(self, num_agents=2):
+        self._required_roles = [f"PurpleAgent_{i}" for i in
+                                range(num_agents)]
+        self._required_config_keys = ["num_rounds"]
         self._tool_provider = ToolProvider()
+        self.expected_endpoints = []
+        self.openapi_loader = OpenAPILoader(BENCHMARK_ROOT)
+        self.code_generator = CodeGenerator()
 
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
         missing_roles = set(self._required_roles) - set(request.participants.keys())
@@ -55,23 +54,21 @@ class DebateJudge(GreenAgent):
         return True, "ok"
 
     async def run_eval(self, request: EvalRequest, updater: TaskUpdater) -> None:
-        logger.info(f"Starting debate orchestration: {request}")
+        logger.info(f"Starting code creation orchestration: {request}")
 
         try:
             code = await self.orchestrate_code_creation(request.participants,
-                                                request.config["topic"],
-                                                request.config["num_rounds"],
-                                                updater)
-
-            await updater.update_status(TaskState.working, new_agent_text_message(f"Code creation orchestration finished. Starting evaluation."))
-            logger.info("Code creation orchestration finished. Evaluating debate.")
-            code_eval: DebateEval = await self.judge_code(request.config["topic"], code)
+                                                        request.config["num_rounds"],
+                                                        updater)
+            await updater.update_status(TaskState.working, new_agent_text_message(
+                f"Code creation orchestration finished. Starting evaluation."))
+            logger.info("Code creation orchestration finished. Evaluating code.")
+            code_eval: CodeEval = await self.judge_code(code, updater)
             logger.info(f"Code Evaluation:\n{code_eval.model_dump_json()}")
 
             result = EvalResult(winner=code_eval.winner, detail=code_eval.model_dump())
             await updater.add_artifact(
                 parts=[
-                    Part(root=TextPart(text=code_eval.reason)),
                     Part(root=TextPart(text=result.model_dump_json())),
                 ],
                 name="Result",
@@ -79,45 +76,105 @@ class DebateJudge(GreenAgent):
         finally:
             self._tool_provider.reset()
 
+
     async def orchestrate_code_creation(
-        self,
-        participants: dict[str, str],
-        topic: str,
-        num_rounds: int,
-        updater: TaskUpdater,
-    ) -> dict[str, list[str]]:
-        debate: dict[str, list[str]] = {"pro_debater": [], "con_debater": []} # TODO: Adapt for arbitrary number of agents
+            self,
+            participants: dict[str, str],
+            num_rounds: int,
+            updater: TaskUpdater,
+    ) -> dict[str, dict[str, list[str]]]:
 
-        async def turn(role: str, prompt: str) -> str:
-            response = await self._tool_provider.talk_to_agent(prompt, str(participants[role]), new_conversation=False)
-            logger.info(f"{role}: {response}")
-            debate[role].append(response)
-            await updater.update_status(TaskState.working, new_agent_text_message(f"{role}: {response}"))
-            return response
 
-        # TODO: Add benchmark cases
-        # For each round
-        # 1. Load openapi.json specifications
-        # 2. Load query
-        # 3. Each agent generates code to answer the query using the specifications
-        # Collect results and return
-        return debate
+        dictionary = {role: {scenario: [] for scenario in SCENARIOS}
+                                            for role in participants.keys()}
+        self.expected_endpoints = []
+        logger.info(f"Orchestrating code creation for {num_rounds} rounds.")
 
-    async def judge_code(self, topic: str, debate_text: str) -> DebateEval:
-        # TODO: For each round: Call static code analysis (socbenchsc)
-        # Input: Code + Solution
-        # Output: Called endpoints
-        # Compute recall, i.e., number of correct endpoints in percent
-        # return intermediate results + winner
-        return result
+        for round_id in range(num_rounds):
+            domain_path = self.openapi_loader.get_random_domain_path(DOMAINS)
+            openapis = self.openapi_loader.load_openapi_specs(domain_path)
+            query_text, endpoints = self.openapi_loader.load_query(domain_path)
+            self.expected_endpoints.append(endpoints)
+            await updater.update_status(TaskState.working, new_agent_text_message(
+                f"[Round {round_id + 1}] selected query: {query_text}"))
+            for role in participants.keys():
+             for scenario in SCENARIOS:
+                if scenario == "medium":
+                   result_medium = await run_scenario_medium(self, role, "medium", openapis, query_text, updater, dictionary)
+                   dictionary[role]["medium"].append(result_medium)
+                else:
+                   result_hard = await run_scenario_hard(self, role, "hard", openapis, query_text, updater, dictionary)
+                   dictionary[role]["hard"].append(result_hard)
+
+        return dictionary
+
+    async def judge_code(self, code_dict: dict[str, dict[str, list[str]]], updater:TaskUpdater) -> CodeEval:
+
+        scenario_results = {scenario: {} for scenario in SCENARIOS}
+        num_rounds = len(self.expected_endpoints)
+
+        for scenario in SCENARIOS:
+            intermediate_results = {agent: {"recall": [], "precision": [], "f1": []} for agent in code_dict}
+            for round_idx in range(num_rounds):
+                expected = self.expected_endpoints[round_idx]
+
+                for agent in code_dict:
+                    code = code_dict[agent][scenario][round_idx]
+                    analysis = Analysis(code)
+                    retrieved = analysis.perform_analysis()
+
+                    normalized_retrieved = {normalize_endpoint(ep) for ep in retrieved}
+                    normalized_expected = [normalize_expected_endpoint(ep) for ep in expected]
+
+                    matched = match_retrieved_to_expected(normalized_retrieved, normalized_expected)
+                    recall = round(len(matched) / len(normalized_expected), 2) if normalized_expected else 0.0
+                    precision = round(len(matched) / len(normalized_retrieved), 2) if normalized_retrieved else 0.0
+                    f1 = compute_f1(precision, recall)
+                    await updater.update_status(TaskState.working, new_agent_text_message(
+                        f"Agent {agent} - Round {round_idx + 1} - Scenario {scenario}:\n"
+                        f"Retrieved endpoints: {retrieved}\n"
+                        f"Matched endpoints: {matched}\n"
+                        f"Recall: {recall}, Precision: {precision}, F1: {f1}"))
+
+                    intermediate_results[agent]["recall"].append(recall)
+                    intermediate_results[agent]["precision"].append(precision)
+                    intermediate_results[agent]["f1"].append(f1)
+
+
+            for agent, metrics in intermediate_results.items():
+                scenario_results[scenario][agent] = {
+                    "recall": sum(metrics["recall"]) / len(metrics["recall"]),
+                    "precision": sum(metrics["precision"]) / len(metrics["precision"]),
+                    "f1": sum(metrics["f1"]) / len(metrics["f1"]),
+                }
+
+        final_recall_scores = {
+            agent: round(sum(scenario_results[sc][agent]["recall"] for sc in SCENARIOS) / len(SCENARIOS), 2)
+            for agent in code_dict
+        }
+
+        winner = max(final_recall_scores, key=final_recall_scores.get)
+
+        return CodeEval(
+            participants={
+                agent: CodeScore(
+                    recall=round(sum(scenario_results[sc][agent]["recall"] for sc in SCENARIOS) / len(SCENARIOS), 2),
+                    precision=round(sum(scenario_results[sc][agent]["precision"] for sc in SCENARIOS) / len(SCENARIOS), 2),
+                    f1=round(sum(scenario_results[sc][agent]["f1"] for sc in SCENARIOS) / len(SCENARIOS), 2)
+                )
+                for agent in code_dict
+            },
+            winner=f"Winner: {winner} (combined Recall = {final_recall_scores[winner]})"
+        )
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Run the A2A debate judge.")
+    parser = argparse.ArgumentParser(description="Run the A2A code generation agent.")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind the server")
     parser.add_argument("--port", type=int, default=9019, help="Port to bind the server")
     parser.add_argument("--card-url", type=str, help="External URL to provide in the agent card")
-    parser.add_argument("--cloudflare-quick-tunnel", action="store_true", help="Use a Cloudflare quick tunnel. Requires cloudflared. This will override --card-url")
+    parser.add_argument("--cloudflare-quick-tunnel", action="store_true",
+                        help="Use a Cloudflare quick tunnel. Requires cloudflared. This will override --card-url")
     args = parser.parse_args()
 
     if args.cloudflare_quick_tunnel:
@@ -127,10 +184,9 @@ async def main():
         agent_url_cm = contextlib.nullcontext(args.card_url or f"http://{args.host}:{args.port}/")
 
     async with agent_url_cm as agent_url:
-        agent = DebateJudge()
+        agent = CodeJudge()
         executor = GreenExecutor(agent)
-        agent_card = debate_judge_agent_card("DebateJudge", agent_url)
-
+        agent_card = judge_agent_card("CodeJudge", agent_url)
         request_handler = DefaultRequestHandler(
             agent_executor=executor,
             task_store=InMemoryTaskStore(),
@@ -144,6 +200,7 @@ async def main():
         uvicorn_config = uvicorn.Config(server.build(), host=args.host, port=args.port)
         uvicorn_server = uvicorn.Server(uvicorn_config)
         await uvicorn_server.serve()
+
 
 if __name__ == '__main__':
     asyncio.run(main())

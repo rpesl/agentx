@@ -59,11 +59,9 @@ async def send_message(message: str, base_url: str, context_id: str | None = Non
             "response": "",
             "context_id": None
         }
-
         # if streaming == False, only one event is generated
         async for event in client.send_message(outbound_msg):
             last_event = event
-
         match last_event:
             case Message() as msg:
                 outputs["context_id"] = msg.context_id
@@ -81,5 +79,4 @@ async def send_message(message: str, base_url: str, context_id: str | None = Non
 
             case _:
                 pass
-
         return outputs
