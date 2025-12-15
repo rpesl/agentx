@@ -5,10 +5,12 @@ from a2a.types import (
     AgentSkill,
 )
 
+
 class CodeScore(BaseModel):
     recall: float
     precision: float
     f1: float
+
 
 class CodeEval(BaseModel):
     participants: dict[str, CodeScore]
@@ -47,7 +49,7 @@ def judge_agent_card(agent_name: str, card_url: str) -> AgentCard:
             "and normalize them according to SOCBench conventions."
             "It then computes precision, recall and F1 scores for each agent and produces structured evaluation reports."
         ),
-    url=card_url,
+        url=card_url,
         version='1.0.0',
         default_input_modes=['text'],
         default_output_modes=['text'],

@@ -27,7 +27,7 @@ async def wait_for_agents(cfg: dict, timeout: int = 30) -> bool:
     if not endpoints:
         return True  # No agents to wait for
 
-    print(f"Waiting for {len(endpoints)} agent(s) to be ready...")
+    print(f"Waiting for {len(endpoints)} agent(s) to be ready... \n", flush=True)
     start_time = time.time()
 
     async def check_endpoint(endpoint: str) -> bool:
@@ -50,10 +50,10 @@ async def wait_for_agents(cfg: dict, timeout: int = 30) -> bool:
         if ready_count == len(endpoints):
             return True
 
-        print(f"  {ready_count}/{len(endpoints)} agents ready, waiting...")
+        print(f"  {ready_count}/{len(endpoints)} agents ready, waiting...", flush=True)
         await asyncio.sleep(1)
 
-    print(f"Timeout: Only {ready_count}/{len(endpoints)} agents became ready after {timeout}s")
+    print(f"Timeout: Only {ready_count}/{len(endpoints)} agents became ready after {timeout}s", flush=True)
     return False
 
 
@@ -137,15 +137,15 @@ def main():
 
         # Wait for all agents to be ready
         if not asyncio.run(wait_for_agents(cfg)):
-            print("Error: Not all agents became ready. Exiting.")
+            print("Error: Not all agents became ready. Exiting.", flush=True)
             return
 
-        print("Agents started. Press Ctrl+C to stop.")
+        print("Agents started. Press Ctrl+C to stop. \n", flush=True)
         if args.serve_only:
             while True:
                 for proc in procs:
                     if proc.poll() is not None:
-                        print(f"Agent exited with code {proc.returncode}")
+                        print(f"Agent exited with code {proc.returncode}", flush=True)
                         break
                     time.sleep(0.5)
         else:
@@ -161,7 +161,7 @@ def main():
         pass
 
     finally:
-        print("\nShutting down...")
+        print("\nShutting down...", flush=True)
         for p in procs:
             if p.poll() is None:
                 try:
