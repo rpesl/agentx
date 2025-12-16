@@ -5,10 +5,9 @@ import asyncio
 import logging
 from dotenv import load_dotenv
 from pydantic import HttpUrl
-
 from endpoint_evaluator import normalize_endpoint, normalize_expected_endpoint, match_retrieved_to_expected, compute_f1
 from openapi_loader import OpenAPILoader
-from scenarios import run_scenario_hard, run_scenario_medium
+from scenarios import ScenarioRunner
 from socbenchsc.src.socbenchsc.analysis import Analysis
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -26,7 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("evaluation_agent")
 
 BENCHMARK_ROOT = "scenarios/socbench/benchmark"
-SCENARIOS = ["medium", "hard"]
+SCENARIOS = ["easy", "medium", "hard"]
 
 
 class CodeJudge(GreenAgent):
@@ -36,6 +35,7 @@ class CodeJudge(GreenAgent):
         self._tool_provider = ToolProvider()
         self.expected_endpoints = []
         self.openapi_loader = OpenAPILoader(BENCHMARK_ROOT)
+        self.scenario_runner = ScenarioRunner(self._tool_provider)
 
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
         missing_roles = set(self._required_roles) - set(request.participants.keys())
@@ -59,11 +59,7 @@ class CodeJudge(GreenAgent):
                 request.config["num_rounds"],
                 updater
             )
-            logger.info("Code creation orchestration finished. Evaluating code.")
-
             code_eval: CodeEval = await self.judge_code(code, updater)
-            logger.info(f"Code Evaluation:\n{code_eval.model_dump_json()}")
-
             result = EvalResult(winner=code_eval.winner, detail=code_eval.model_dump())
             await updater.add_artifact(
                 parts=[Part(root=TextPart(text=result.model_dump_json()))],
@@ -79,13 +75,11 @@ class CodeJudge(GreenAgent):
             updater: TaskUpdater,
     ) -> dict[str, dict[str, list[str]]]:
 
-        dictionary = {
+        results = {
             role: {scenario: [] for scenario in SCENARIOS}
             for role in participants.keys()
         }
         self.expected_endpoints = []
-
-        logger.info(f"Orchestrating code creation for {num_rounds} rounds.")
 
         for round_id in range(num_rounds):
             domain_path = self.openapi_loader.get_next_domain_path()
@@ -98,22 +92,37 @@ class CodeJudge(GreenAgent):
                 new_agent_text_message(f"[Round {round_id + 1}] Selected query: {query_text}")
             )
             for role, agent_url in participants.items():
-                url_str = str(agent_url) if not isinstance(agent_url, str) else agent_url
-                for scenario in SCENARIOS:
-                    if scenario == "medium":
-                        result = await run_scenario_medium(
-                            self, role, scenario, openapis, query_text,
-                            url_str, updater
-                        )
-                    else:
-                        result = await run_scenario_hard(
-                            self, role, scenario, openapis, query_text,
-                            url_str, updater
-                        )
+                url_str = str(agent_url)
 
-                    dictionary[role][scenario].append(result)
+                easy_code = await self.scenario_runner.run_easy(
+                    role=role,
+                    openapis=openapis,
+                    expected_endpoints=endpoints,
+                    query_text=query_text,
+                    agent_url=url_str,
+                    updater=updater
+                )
+                results[role]["easy"].append(easy_code)
 
-        return dictionary
+                medium_code = await self.scenario_runner.run_medium(
+                    role=role,
+                    openapis=openapis,
+                    query_text=query_text,
+                    agent_url=url_str,
+                    updater=updater
+                )
+                results[role]["medium"].append(medium_code)
+
+                hard_code = await self.scenario_runner.run_hard(
+                    role=role,
+                    openapis=openapis,
+                    query_text=query_text,
+                    agent_url=url_str,
+                    updater=updater
+                )
+                results[role]["hard"].append(hard_code)
+
+        return results
 
     async def judge_code(self, code_dict: dict[str, dict[str, list[str]]], updater: TaskUpdater) -> CodeEval:
 
@@ -131,8 +140,11 @@ class CodeJudge(GreenAgent):
 
                 for agent in code_dict:
                     code = code_dict[agent][scenario][round_idx]
-                    analysis = Analysis(code)
-                    retrieved = analysis.perform_analysis()
+                    try:
+                        analysis = Analysis(code)
+                        retrieved = analysis.perform_analysis()
+                    except (SyntaxError, ValueError):
+                        retrieved = set()
 
                     normalized_retrieved = {normalize_endpoint(ep) for ep in retrieved}
                     normalized_expected = [normalize_expected_endpoint(ep) for ep in expected]
@@ -177,15 +189,15 @@ class CodeJudge(GreenAgent):
             participants={
                 agent: CodeScore(
                     recall=round(
-                        sum(scenario_results[sc][agent]["recall"] for sc in SCENARIOS) / len(SCENARIOS),
+                        sum(scenario_results[scenario][agent]["recall"] for scenario in SCENARIOS) / len(SCENARIOS),
                         2
                     ),
                     precision=round(
-                        sum(scenario_results[sc][agent]["precision"] for sc in SCENARIOS) / len(SCENARIOS),
+                        sum(scenario_results[scenario][agent]["precision"] for scenario in SCENARIOS) / len(SCENARIOS),
                         2
                     ),
                     f1=round(
-                        sum(scenario_results[sc][agent]["f1"] for sc in SCENARIOS) / len(SCENARIOS),
+                        sum(scenario_results[scenario][agent]["f1"] for scenario in SCENARIOS) / len(SCENARIOS),
                         2
                     )
                 )
