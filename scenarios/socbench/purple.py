@@ -11,7 +11,7 @@ from a2a.types import (
     AgentSkill
 )
 
-from purple_executor import CodeGenerationExecutor
+from purple_executor import PurpleExecutor
 
 load_dotenv()
 
@@ -22,14 +22,12 @@ def create_agent_card(agent_url: str) -> AgentCard:
         name='Generate Python Code',
         description=(
             "Generates Python code based on a query and OpenAPI specifications. "
-            "Accepts JSON input with 'query', 'openapi_specs', and 'scenario' fields."
+            "Accepts JSON input with 'prompt' field containing the user's request."
         ),
         tags=['code generation', 'OpenAPI', 'Python'],
         examples=[
             """{
-            "query": "Create a function to fetch user data from the API",
-            "openapi_specs": [...],
-            "scenario": "medium"
+            "prompt": "Generate Python code to fetch the list of users from the API using the provided OpenAPI specs."
             }"""]
     )
 
@@ -54,7 +52,7 @@ async def main():
 
     agent_url = args.card_url or f'http://{args.host}:{args.port}/'
 
-    executor = CodeGenerationExecutor()
+    executor = PurpleExecutor()
     agent_card = create_agent_card(agent_url)
 
     request_handler = DefaultRequestHandler(

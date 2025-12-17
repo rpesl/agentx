@@ -89,8 +89,7 @@ class CodeJudge(GreenAgent):
 
             await updater.update_status(
                 TaskState.working,
-                new_agent_text_message(f"[Round {round_id + 1}] Selected query: {query_text}")
-            )
+                new_agent_text_message(f"[Round {round_id + 1}] Selected query: {query_text}"), )
             for role, agent_url in participants.items():
                 url_str = str(agent_url)
 
@@ -143,7 +142,7 @@ class CodeJudge(GreenAgent):
                     try:
                         analysis = Analysis(code)
                         retrieved = analysis.perform_analysis()
-                    except (SyntaxError, ValueError):
+                    except (SyntaxError, ValueError, NotImplementedError):
                         retrieved = set()
 
                     normalized_retrieved = {normalize_endpoint(ep) for ep in retrieved}

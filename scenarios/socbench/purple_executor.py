@@ -9,11 +9,15 @@ from a2a.utils import new_task, new_agent_text_message
 from openai import OpenAI
 
 
-class CodeGenerationExecutor(AgentExecutor):
+class PurpleExecutor(AgentExecutor):
     def __init__(self, api_key_env: str = "NEBIUS_API_KEY"):
         self.api_key = os.getenv(api_key_env)
         if not self.api_key:
             raise ValueError(f"Environment variable {api_key_env} not set")
+        self.client = OpenAI(
+            base_url="https://api.tokenfactory.nebius.com/v1/",
+            api_key=self.api_key
+        )
 
     @staticmethod
     def clean_generated_code(text: str) -> str:
@@ -32,11 +36,7 @@ class CodeGenerationExecutor(AgentExecutor):
         return text.strip()
 
     def generate_code(self, prompt: str) -> str:
-        client = OpenAI(
-            base_url="https://api.tokenfactory.nebius.com/v1/",
-            api_key=self.api_key
-        )
-        response = client.chat.completions.create(
+        response = self.client.chat.completions.create(
             model="moonshotai/Kimi-K2-Instruct",
             messages=[
                 {
@@ -49,14 +49,32 @@ class CodeGenerationExecutor(AgentExecutor):
         generated_code = response.choices[0].message.content
         return self.clean_generated_code(generated_code)
 
+    def generate_text(self, prompt: str) -> str:
+        response = self.client.chat.completions.create(
+            model="moonshotai/Kimi-K2-Instruct",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a reviewer agent. "
+                        "Your task is to confirm or reject whether extracted API endpoints "
+                        "match the user's intent. "
+                        "Respond with 'Yes' or 'No' followed by a brief explanation."
+                    )
+                },
+                {"role": "user", "content": prompt}
+            ]
+        )
+
+        return response.choices[0].message.content.strip()
+
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         request_text = context.get_user_input()
 
         try:
             request_data = json.loads(request_text)
-            query = request_data.get("query", "")
-            openapi_specs = request_data.get("openapi_specs", [])
-            scenario = request_data.get("scenario", "")
+            prompt = request_data.get("prompt", "")
+            mode = request_data.get("mode", "code")
         except json.JSONDecodeError as e:
             msg = context.message
             if msg:
@@ -79,25 +97,14 @@ class CodeGenerationExecutor(AgentExecutor):
         from a2a.server.tasks import TaskUpdater
         updater = TaskUpdater(event_queue, task.id, task.context_id)
 
-        await updater.update_status(
-            TaskState.working,
-            new_agent_text_message(
-                f"Generating code for scenario: {scenario}",
-                context_id=context.context_id
-            )
-        )
-
-        prompt = f"""
-        You are a code generation agent. Generate Python code for the following query using the OpenAPI specs.
-        Query: {query}
-        OpenAPI Specifications: {json.dumps(openapi_specs)}
-        """
-
         try:
-            generated_code = self.generate_code(prompt)
+            if mode == "confirm":
+                result = self.generate_text(prompt)
+            else:
+                result = self.generate_code(prompt)
 
             response_message = new_agent_text_message(
-                generated_code,
+                result,
                 context_id=context.context_id
             )
 
@@ -108,7 +115,7 @@ class CodeGenerationExecutor(AgentExecutor):
 
             await updater.complete(
                 message=new_agent_text_message(
-                    generated_code,
+                    result,
                     context_id=context.context_id
                 )
             )

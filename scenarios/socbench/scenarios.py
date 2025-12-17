@@ -9,6 +9,7 @@ from a2a.utils import new_agent_text_message
 from socbenchsc.src.socbenchsc import Analysis
 from endpoint_evaluator import normalize_endpoint
 
+
 @dataclass
 class ScenarioConfig:
     level: str
@@ -22,13 +23,12 @@ class ScenarioRunner:
     def __init__(self, tool_provider):
         self._tool_provider = tool_provider
 
-
     @staticmethod
     async def log(
             updater: TaskUpdater,
-        role: str,
-        scenario: str,
-        msg: str
+            role: str,
+            scenario: str,
+            msg: str
     ) -> None:
         await updater.update_status(
             TaskState.working,
@@ -40,34 +40,30 @@ class ScenarioRunner:
         try:
             analysis = Analysis(code)
             retrieved = analysis.perform_analysis()
-        except (SyntaxError, ValueError):
+        except (SyntaxError, ValueError, NotImplementedError):
             return set()
 
         return {normalize_endpoint(ep) for ep in retrieved}
 
     async def request_code(
-        self,
-        agent_url: str,
-        prompt: str,
-        scenario: str,
-        openapi_specs: list[dict],
-        new_conversation: bool
+            self,
+            agent_url: str,
+            prompt: str,
+            new_conversation: bool
     ) -> str:
         return await self._tool_provider.talk_to_agent(
             message=json.dumps({
-                "query": prompt,
-                "openapi_specs": openapi_specs,
-                "scenario": scenario
+                "prompt": prompt
             }),
             url=agent_url,
             new_conversation=new_conversation
         )
 
     async def request_confirmation(
-        self,
-        agent_url: str,
-        query_text:str,
-        extracted: set[str],
+            self,
+            agent_url: str,
+            query_text: str,
+            extracted: set[str],
     ) -> str:
         prompt = (
             f"You generated code for the query: {query_text}"
@@ -79,8 +75,8 @@ class ScenarioRunner:
 
         return await self._tool_provider.talk_to_agent(
             message=json.dumps({
-                "query": prompt,
-                "scenario": "confirmation"
+                "mode": "confirmation",
+                "prompt": prompt
             }),
             url=agent_url,
             new_conversation=False
@@ -91,16 +87,14 @@ class ScenarioRunner:
         text = text.lower().strip()
         return text.startswith("yes") or text.startswith("**yes**")
 
-
-
     async def run_core(
-        self,
-        role: str,
-        agent_url: str,
-        updater: TaskUpdater,
-        config: ScenarioConfig,
-        query_text: str,
-        openapis: list[dict]
+            self,
+            role: str,
+            agent_url: str,
+            updater: TaskUpdater,
+            config: ScenarioConfig,
+            query_text: str,
+            openapis: list[dict]
     ) -> str:
 
         best_code = ""
@@ -131,8 +125,6 @@ class ScenarioRunner:
             code = await self.request_code(
                 agent_url=agent_url,
                 prompt=prompt,
-                scenario=config.level,
-                openapi_specs=openapis,
                 new_conversation=True
             )
 
@@ -191,27 +183,27 @@ class ScenarioRunner:
 
     @staticmethod
     def easy_prompt(
-        *,
-        expected_endpoints: list[str],
-        query_text: str,
-        openapis: list[dict],
-        **_
+            *,
+            expected_endpoints: list[str],
+            query_text: str,
+            openapis: list[dict],
+            **_
     ) -> str:
         return f"""
                Generate Python code for the this query:
                Query: {query_text}
                Use the OpenAPI specs:
                OpenAPI specs: {json.dumps(openapis, indent=2)}
-               Expected endpoints to use:
-                {expected_endpoints}
+               Expected endpoints to retrieve:
+               {expected_endpoints}
                """
 
     @staticmethod
     def task_prompt(
-        *,
-        query_text: str,
-        openapis: list[dict],
-        **_
+            *,
+            query_text: str,
+            openapis: list[dict],
+            **_
     ) -> str:
         return f"""
                Generate Python code for this query:
@@ -220,15 +212,14 @@ class ScenarioRunner:
                {json.dumps(openapis, indent=2)}
                """
 
-
     async def run_easy(
-        self,
-        role: str,
-        openapis: list[dict],
-        expected_endpoints: list[str],
-        query_text: str,
-        agent_url: str,
-        updater: TaskUpdater
+            self,
+            role: str,
+            openapis: list[dict],
+            expected_endpoints: list[str],
+            query_text: str,
+            agent_url: str,
+            updater: TaskUpdater
     ) -> str:
         config = ScenarioConfig(
             level="easy",
@@ -242,12 +233,12 @@ class ScenarioRunner:
         )
 
     async def run_medium(
-        self,
-        role: str,
-        openapis: list[dict],
-        query_text: str,
-        agent_url: str,
-        updater: TaskUpdater
+            self,
+            role: str,
+            openapis: list[dict],
+            query_text: str,
+            agent_url: str,
+            updater: TaskUpdater
     ) -> str:
         config = ScenarioConfig(
             level="medium",
@@ -260,12 +251,12 @@ class ScenarioRunner:
         )
 
     async def run_hard(
-        self,
-        role: str,
-        openapis: list[dict],
-        query_text: str,
-        agent_url: str,
-        updater: TaskUpdater
+            self,
+            role: str,
+            openapis: list[dict],
+            query_text: str,
+            agent_url: str,
+            updater: TaskUpdater
     ) -> str:
         config = ScenarioConfig(
             level="hard",
