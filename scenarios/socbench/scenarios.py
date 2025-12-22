@@ -51,6 +51,7 @@ class ScenarioRunner:
             prompt: str,
             new_conversation: bool
     ) -> str:
+
         return await self._tool_provider.talk_to_agent(
             message=json.dumps({
                 "prompt": prompt
@@ -63,7 +64,7 @@ class ScenarioRunner:
             self,
             agent_url: str,
             query_text: str,
-            extracted: set[str],
+            extracted: set[str]
     ) -> str:
         prompt = (
             f"You generated code for the query: {query_text}"
@@ -75,17 +76,17 @@ class ScenarioRunner:
 
         return await self._tool_provider.talk_to_agent(
             message=json.dumps({
-                "mode": "confirmation",
+                "mode": "confirm",
                 "prompt": prompt
             }),
             url=agent_url,
-            new_conversation=False
+            new_conversation=True
         )
 
     @staticmethod
     def confirmation_is_positive(text: str) -> bool:
         text = text.lower().strip()
-        return text.startswith("yes") or text.startswith("**yes**")
+        return text.startswith("yes") or text.startswith("**yes**") or text.startswith("'yes'")
 
     async def run_core(
             self,
@@ -93,8 +94,7 @@ class ScenarioRunner:
             agent_url: str,
             updater: TaskUpdater,
             config: ScenarioConfig,
-            query_text: str,
-            openapis: list[dict]
+            query_text: str
     ) -> str:
 
         best_code = ""
@@ -118,7 +118,6 @@ class ScenarioRunner:
 
             prompt = config.prompt_builder(
                 query_text=query_text,
-                openapis=openapis,
                 expected_endpoints=config.expected_endpoints
             )
 
@@ -147,7 +146,7 @@ class ScenarioRunner:
             confirmation = await self.request_confirmation(
                 agent_url,
                 query_text,
-                endpoints,
+                endpoints
             )
 
             await self.log(
@@ -186,14 +185,15 @@ class ScenarioRunner:
             *,
             expected_endpoints: list[str],
             query_text: str,
-            openapis: list[dict],
             **_
     ) -> str:
         return f"""
-               Generate Python code for the this query:
+               Generate Python code for this query:
                Query: {query_text}
-               Use the OpenAPI specs:
-               OpenAPI specs: {json.dumps(openapis, indent=2)}
+
+               You have access to MCP tools to discover available domains and load their OpenAPI specs.
+               Use the tools to find the right domain, load the specs and generate code.
+
                Expected endpoints to retrieve:
                {expected_endpoints}
                """
@@ -202,20 +202,19 @@ class ScenarioRunner:
     def task_prompt(
             *,
             query_text: str,
-            openapis: list[dict],
             **_
     ) -> str:
         return f"""
                Generate Python code for this query:
                {query_text}
-               Use the OpenAPI specs:
-               {json.dumps(openapis, indent=2)}
+
+               You have access to MCP tools to discover available domains and load their OpenAPI specs.
+               Use the tools to find the right domain, load the specs and generate code.
                """
 
     async def run_easy(
             self,
             role: str,
-            openapis: list[dict],
             expected_endpoints: list[str],
             query_text: str,
             agent_url: str,
@@ -229,13 +228,12 @@ class ScenarioRunner:
             prompt_builder=self.easy_prompt
         )
         return await self.run_core(
-            role, agent_url, updater, config, query_text, openapis
+            role, agent_url, updater, config, query_text
         )
 
     async def run_medium(
             self,
             role: str,
-            openapis: list[dict],
             query_text: str,
             agent_url: str,
             updater: TaskUpdater
@@ -247,13 +245,12 @@ class ScenarioRunner:
             prompt_builder=self.task_prompt
         )
         return await self.run_core(
-            role, agent_url, updater, config, query_text, openapis
+            role, agent_url, updater, config, query_text
         )
 
     async def run_hard(
             self,
             role: str,
-            openapis: list[dict],
             query_text: str,
             agent_url: str,
             updater: TaskUpdater
@@ -265,5 +262,5 @@ class ScenarioRunner:
             prompt_builder=self.task_prompt
         )
         return await self.run_core(
-            role, agent_url, updater, config, query_text, openapis
+            role, agent_url, updater, config, query_text
         )

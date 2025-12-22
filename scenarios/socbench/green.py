@@ -2,11 +2,10 @@ import argparse
 import contextlib
 import uvicorn
 import asyncio
-import logging
 from dotenv import load_dotenv
 from pydantic import HttpUrl
 from endpoint_evaluator import normalize_endpoint, normalize_expected_endpoint, match_retrieved_to_expected, compute_f1
-from openapi_loader import OpenAPILoader
+from query_loader import QueryLoader
 from scenarios import ScenarioRunner
 from socbenchsc.src.socbenchsc.analysis import Analysis
 from a2a.server.apps import A2AStarletteApplication
@@ -21,11 +20,8 @@ from agentbeats.tool_provider import ToolProvider
 from models import CodeEval, judge_agent_card, CodeScore
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("evaluation_agent")
-
 BENCHMARK_ROOT = "scenarios/socbench/benchmark"
-SCENARIOS = ["easy", "medium", "hard"]
+SCENARIOS = ["easy", "medium", "hard"]  # "rag_easy", "rag_medium", "rag_hard"]
 
 
 class CodeJudge(GreenAgent):
@@ -34,7 +30,7 @@ class CodeJudge(GreenAgent):
         self._required_config_keys = ["num_rounds"]
         self._tool_provider = ToolProvider()
         self.expected_endpoints = []
-        self.openapi_loader = OpenAPILoader(BENCHMARK_ROOT)
+        self.query_loader = QueryLoader(BENCHMARK_ROOT)
         self.scenario_runner = ScenarioRunner(self._tool_provider)
 
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
@@ -51,7 +47,6 @@ class CodeJudge(GreenAgent):
         return True, "ok"
 
     async def run_eval(self, request: EvalRequest, updater: TaskUpdater) -> None:
-        logger.info(f"Starting code creation orchestration: {request}")
 
         try:
             code = await self.orchestrate_code_creation(
@@ -82,20 +77,18 @@ class CodeJudge(GreenAgent):
         self.expected_endpoints = []
 
         for round_id in range(num_rounds):
-            domain_path = self.openapi_loader.get_next_domain_path()
-            openapis = self.openapi_loader.load_openapi_specs(domain_path)
-            query_text, endpoints = self.openapi_loader.load_query(domain_path)
+            domain_path = self.query_loader.get_next_domain()
+            query_text, endpoints = self.query_loader.load_query(domain_path)
             self.expected_endpoints.append(endpoints)
-
             await updater.update_status(
                 TaskState.working,
-                new_agent_text_message(f"[Round {round_id + 1}] Selected query: {query_text}"), )
+                new_agent_text_message(f"[Round {round_id + 1}] Query: {query_text}, Endpoints: {endpoints}")
+            )
             for role, agent_url in participants.items():
                 url_str = str(agent_url)
 
                 easy_code = await self.scenario_runner.run_easy(
                     role=role,
-                    openapis=openapis,
                     expected_endpoints=endpoints,
                     query_text=query_text,
                     agent_url=url_str,
@@ -105,7 +98,6 @@ class CodeJudge(GreenAgent):
 
                 medium_code = await self.scenario_runner.run_medium(
                     role=role,
-                    openapis=openapis,
                     query_text=query_text,
                     agent_url=url_str,
                     updater=updater
@@ -114,12 +106,36 @@ class CodeJudge(GreenAgent):
 
                 hard_code = await self.scenario_runner.run_hard(
                     role=role,
-                    openapis=openapis,
                     query_text=query_text,
                     agent_url=url_str,
                     updater=updater
                 )
                 results[role]["hard"].append(hard_code)
+
+                # rag_easy_code = await self.scenario_runner.run_rag_easy(
+                #     role=role,
+                #     expected_endpoints=endpoints,
+                #     query_text=query_text,
+                #     agent_url=url_str,
+                #     updater=updater
+                # )
+                # results[role]["rag_easy"].append(rag_easy_code)
+                #
+                # rag_medium_code = await self.scenario_runner.run_rag_medium(
+                #     role=role,
+                #     query_text=query_text,
+                #     agent_url=url_str,
+                #     updater=updater
+                # )
+                # results[role]["rag_medium"].append(rag_medium_code)
+                #
+                # rag_hard_code = await self.scenario_runner.run_rag_hard(
+                #     role=role,
+                #     query_text=query_text,
+                #     agent_url=url_str,
+                #     updater=updater
+                # )
+                # results[role]["rag_hard"].append(rag_hard_code)
 
         return results
 
@@ -209,7 +225,7 @@ class CodeJudge(GreenAgent):
 async def main():
     parser = argparse.ArgumentParser(description="Run the A2A code generation agent.")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind the server")
-    parser.add_argument("--port", type=int, default=9019, help="Port to bind the server")
+    parser.add_argument("--port", type=int, default=9009, help="Port to bind the server")
     parser.add_argument("--card-url", type=str, help="External URL to provide in the agent card")
     parser.add_argument("--cloudflare-quick-tunnel", action="store_true",
                         help="Use a Cloudflare quick tunnel. Requires cloudflared. This will override --card-url")

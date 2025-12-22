@@ -10,8 +10,6 @@ from a2a.types import (
     Message,
     TaskStatusUpdateEvent,
     TaskArtifactUpdateEvent,
-    TaskState,
-    Part,
     TextPart,
     DataPart,
 )

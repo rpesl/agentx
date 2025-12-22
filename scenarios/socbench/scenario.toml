@@ -11,11 +11,6 @@ cmd = "python scenarios/socbench/purple.py --host 127.0.0.1 --port 9019"
 role = "PurpleAgent_1"
 endpoint = "http://127.0.0.1:9018"
 cmd = "python scenarios/socbench/purple.py --host 127.0.0.1 --port 9018"
-#
-#[[participants]]
-#role = "PurpleAgent_2"
-#endpoint = "http://127.0.0.1:9020"
-#cmd = "python scenarios/socbench/purple.py --host 127.0.0.1 --port 9020"
 
 [config]
 num_rounds = 1

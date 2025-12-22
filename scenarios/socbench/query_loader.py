@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 
-class OpenAPILoader:
+class QueryLoader:
     def __init__(self, benchmark_root: str):
         self.benchmark_root = Path(benchmark_root)
         self.domain_idx = 0
@@ -16,17 +16,6 @@ class OpenAPILoader:
             "09-communication services", "10-utilities", "11-real estate"
         ]
         self.instances = list(range(1, 6))
-
-    @staticmethod
-    def load_openapi_specs(domain_path: Path) -> List[dict]:
-        openapis = []
-        for entry in sorted(domain_path.iterdir()):
-            if entry.is_dir():
-                openapi_file = entry / "openapi.json"
-                if openapi_file.exists():
-                    with open(openapi_file, "r") as file:
-                        openapis.append(json.load(file))
-        return openapis
 
     def load_query(self, domain_path: Path) -> Tuple[str, List[str]]:
         domain_path_str = str(domain_path.as_posix())
@@ -41,15 +30,13 @@ class OpenAPILoader:
         self.query_idx += 1
         return query["query"], query["endpoints"]
 
-    def get_next_domain_path(self) -> Path:
+    def get_next_domain(self) -> Path:
         domain_name = self.domains[self.domain_idx % len(self.domains)]
         instance_id = self.instances[self.instance_idx % len(self.instances)]
 
         self.domain_idx += 1
         if self.domain_idx % len(self.domains) == 0:
-            self.instance_idx += 1
-            if self.instance_idx >= len(self.instances):
-                self.instance_idx = 0
+            self.instance_idx = (self.instance_idx + 1) % len(self.instances)
+        domain_fs = self.benchmark_root / f"socbenchd_{instance_id}" / domain_name
 
-        domain_path = self.benchmark_root / f"socbenchd_{instance_id}" / domain_name
-        return domain_path
+        return domain_fs

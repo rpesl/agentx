@@ -50,7 +50,7 @@ async def wait_for_agents(cfg: dict, timeout: int = 30) -> bool:
         if ready_count == len(endpoints):
             return True
 
-        print(f"  {ready_count}/{len(endpoints)} agents ready, waiting...", flush=True)
+        print(f"{ready_count}/{len(endpoints)} agents ready, waiting...", flush=True)
         await asyncio.sleep(1)
 
     print(f"Timeout: Only {ready_count}/{len(endpoints)} agents became ready after {timeout}s", flush=True)
