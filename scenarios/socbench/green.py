@@ -1,7 +1,5 @@
-import argparse
-import contextlib
-import uvicorn
-import asyncio
+from pathlib import Path
+import toml, uvicorn, asyncio, logging, argparse, contextlib
 from dotenv import load_dotenv
 from pydantic import HttpUrl
 from endpoint_evaluator import normalize_endpoint, normalize_expected_endpoint, match_retrieved_to_expected, compute_f1
@@ -19,13 +17,15 @@ from agentbeats.models import EvalRequest, EvalResult
 from agentbeats.tool_provider import ToolProvider
 from models import CodeEval, judge_agent_card, CodeScore
 
+logging.basicConfig(level=logging.INFO)
 load_dotenv()
 BENCHMARK_ROOT = "scenarios/socbench/benchmark"
-SCENARIOS = ["easy", "medium", "hard"]  # "rag_easy", "rag_medium", "rag_hard"]
+SCENARIOS = ["easy", "medium", "hard", "rag_easy", "rag_medium", "rag_hard"]
 
 
 class CodeJudge(GreenAgent):
-    def __init__(self, num_agents=2):
+    def __init__(self):
+        num_agents = self._get_num_agents_from_config()
         self._required_roles = [f"PurpleAgent_{i}" for i in range(num_agents)]
         self._required_config_keys = ["num_rounds"]
         self._tool_provider = ToolProvider()
@@ -33,13 +33,33 @@ class CodeJudge(GreenAgent):
         self.query_loader = QueryLoader(BENCHMARK_ROOT)
         self.scenario_runner = ScenarioRunner(self._tool_provider)
 
+    @staticmethod
+    def _get_num_agents_from_config() -> int:
+        try:
+            config_file = "scenarios/socbench/scenario.toml"
+
+            if not Path(config_file).exists():
+                raise FileNotFoundError(f"{config_file} not found in current directory")
+
+            config_data = toml.load(config_file)
+            participants = config_data.get("participants", [])
+            num_agents = len(participants)
+            return num_agents
+
+        except Exception as e:
+            logging.error(f"Error: {e}")
+            raise
+
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
         missing_roles = set(self._required_roles) - set(request.participants.keys())
+
         if missing_roles:
             return False, f"Missing roles: {missing_roles}"
         missing_config_keys = set(self._required_config_keys) - set(request.config.keys())
+
         if missing_config_keys:
             return False, f"Missing config keys: {missing_config_keys}"
+
         try:
             int(request.config["num_rounds"])
         except Exception as e:
@@ -47,7 +67,6 @@ class CodeJudge(GreenAgent):
         return True, "ok"
 
     async def run_eval(self, request: EvalRequest, updater: TaskUpdater) -> None:
-
         try:
             code = await self.orchestrate_code_creation(
                 request.participants,
@@ -74,16 +93,24 @@ class CodeJudge(GreenAgent):
             role: {scenario: [] for scenario in SCENARIOS}
             for role in participants.keys()
         }
+
         self.expected_endpoints = []
 
         for round_id in range(num_rounds):
+
             domain_path = self.query_loader.get_next_domain()
-            query_text, endpoints = self.query_loader.load_query(domain_path)
+            query_text, endpoints, instance_id = self.query_loader.load_query(domain_path)
             self.expected_endpoints.append(endpoints)
+
             await updater.update_status(
                 TaskState.working,
-                new_agent_text_message(f"[Round {round_id + 1}] Query: {query_text}, Endpoints: {endpoints}")
+                new_agent_text_message(
+                    f"[Round {round_id + 1}] \n"
+                    f"Query: {query_text}\n"
+                    f"Expected Endpoints: {endpoints}\n"
+                )
             )
+
             for role, agent_url in participants.items():
                 url_str = str(agent_url)
 
@@ -92,7 +119,8 @@ class CodeJudge(GreenAgent):
                     expected_endpoints=endpoints,
                     query_text=query_text,
                     agent_url=url_str,
-                    updater=updater
+                    updater=updater,
+                    instance_id=instance_id
                 )
                 results[role]["easy"].append(easy_code)
 
@@ -100,7 +128,8 @@ class CodeJudge(GreenAgent):
                     role=role,
                     query_text=query_text,
                     agent_url=url_str,
-                    updater=updater
+                    updater=updater,
+                    instance_id=instance_id
                 )
                 results[role]["medium"].append(medium_code)
 
@@ -108,34 +137,38 @@ class CodeJudge(GreenAgent):
                     role=role,
                     query_text=query_text,
                     agent_url=url_str,
-                    updater=updater
+                    updater=updater,
+                    instance_id=instance_id
                 )
                 results[role]["hard"].append(hard_code)
 
-                # rag_easy_code = await self.scenario_runner.run_rag_easy(
-                #     role=role,
-                #     expected_endpoints=endpoints,
-                #     query_text=query_text,
-                #     agent_url=url_str,
-                #     updater=updater
-                # )
-                # results[role]["rag_easy"].append(rag_easy_code)
-                #
-                # rag_medium_code = await self.scenario_runner.run_rag_medium(
-                #     role=role,
-                #     query_text=query_text,
-                #     agent_url=url_str,
-                #     updater=updater
-                # )
-                # results[role]["rag_medium"].append(rag_medium_code)
-                #
-                # rag_hard_code = await self.scenario_runner.run_rag_hard(
-                #     role=role,
-                #     query_text=query_text,
-                #     agent_url=url_str,
-                #     updater=updater
-                # )
-                # results[role]["rag_hard"].append(rag_hard_code)
+                rag_easy_code = await self.scenario_runner.run_rag_easy(
+                    role=role,
+                    expected_endpoints=endpoints,
+                    query_text=query_text,
+                    agent_url=url_str,
+                    updater=updater,
+                    instance_id=instance_id
+                )
+                results[role]["rag_easy"].append(rag_easy_code)
+
+                rag_medium_code = await self.scenario_runner.run_rag_medium(
+                    role=role,
+                    query_text=query_text,
+                    agent_url=url_str,
+                    updater=updater,
+                    instance_id=instance_id
+                )
+                results[role]["rag_medium"].append(rag_medium_code)
+
+                rag_hard_code = await self.scenario_runner.run_rag_hard(
+                    role=role,
+                    query_text=query_text,
+                    agent_url=url_str,
+                    updater=updater,
+                    instance_id=instance_id
+                )
+                results[role]["rag_hard"].append(rag_hard_code)
 
         return results
 
@@ -155,6 +188,7 @@ class CodeJudge(GreenAgent):
 
                 for agent in code_dict:
                     code = code_dict[agent][scenario][round_idx]
+
                     try:
                         analysis = Analysis(code)
                         retrieved = analysis.perform_analysis()
@@ -192,7 +226,7 @@ class CodeJudge(GreenAgent):
 
         final_recall_scores = {
             agent: round(
-                sum(scenario_results[sc][agent]["recall"] for sc in SCENARIOS) / len(SCENARIOS),
+                sum(scenario_results[scenario][agent]["recall"] for scenario in SCENARIOS) / len(SCENARIOS),
                 2
             )
             for agent in code_dict

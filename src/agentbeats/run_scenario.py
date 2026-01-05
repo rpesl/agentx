@@ -12,7 +12,7 @@ from a2a.client import A2ACardResolver
 load_dotenv(override=True)
 
 
-async def wait_for_agents(cfg: dict, timeout: int = 30) -> bool:
+async def wait_for_agents(cfg: dict, timeout: int = 60) -> bool:
     """Wait for all agents to be healthy and responding."""
     endpoints = []
 

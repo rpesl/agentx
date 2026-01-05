@@ -1,11 +1,9 @@
 import json
 from dataclasses import dataclass
 from typing import Callable, Optional
-
 from a2a.server.tasks import TaskUpdater
 from a2a.types import TaskState
 from a2a.utils import new_agent_text_message
-
 from socbenchsc.src.socbenchsc import Analysis
 from endpoint_evaluator import normalize_endpoint
 
@@ -45,19 +43,29 @@ class ScenarioRunner:
 
         return {normalize_endpoint(ep) for ep in retrieved}
 
+    @staticmethod
+    def confirmation_is_positive(text: str) -> bool:
+        text = text.lower().strip()
+        return text.startswith("yes") or text.startswith("**yes**") or text.startswith("'yes'")
+
     async def request_code(
             self,
             agent_url: str,
             prompt: str,
-            new_conversation: bool
+            instance_id: int,
+            mode: str = "code"
     ) -> str:
 
+        request_data = {
+            "prompt": prompt,
+            "instance_id": instance_id,
+            "mode": mode
+        }
+
         return await self._tool_provider.talk_to_agent(
-            message=json.dumps({
-                "prompt": prompt
-            }),
+            message=json.dumps(request_data),
             url=agent_url,
-            new_conversation=new_conversation
+            new_conversation=True
         )
 
     async def request_confirmation(
@@ -67,10 +75,10 @@ class ScenarioRunner:
             extracted: set[str]
     ) -> str:
         prompt = (
-            f"You generated code for the query: {query_text}"
-            f"The static analysis extracted the following endpoints from your code:"
-            f"{list(extracted)}"
-            f"Are these the correct endpoints you intended to use?"
+            f"\nYou generated code for the query:\n{query_text}\n"
+            f"The static analysis extracted the following endpoints from your code:\n"
+            f"{list(extracted)}\n"
+            f"Are these the correct endpoints you intended to use?\n"
             f"Please answer with 'Yes' or 'No' and briefly explain."
         )
 
@@ -83,18 +91,15 @@ class ScenarioRunner:
             new_conversation=True
         )
 
-    @staticmethod
-    def confirmation_is_positive(text: str) -> bool:
-        text = text.lower().strip()
-        return text.startswith("yes") or text.startswith("**yes**") or text.startswith("'yes'")
-
     async def run_core(
             self,
             role: str,
             agent_url: str,
             updater: TaskUpdater,
             config: ScenarioConfig,
-            query_text: str
+            query_text: str,
+            instance_id: int,
+            mode: str = "code"
     ) -> str:
 
         best_code = ""
@@ -104,7 +109,7 @@ class ScenarioRunner:
             updater,
             role,
             config.level,
-            f"Starting scenario ({config.max_attempts} attempts)"
+            f"Starting {mode.upper()} scenario ({config.max_attempts} attempts)"
         )
 
         for attempt in range(1, config.max_attempts + 1):
@@ -124,7 +129,8 @@ class ScenarioRunner:
             code = await self.request_code(
                 agent_url=agent_url,
                 prompt=prompt,
-                new_conversation=True
+                instance_id=instance_id,
+                mode=mode
             )
 
             endpoints = self.extract_endpoints(code)
@@ -164,6 +170,7 @@ class ScenarioRunner:
                     "Accepted"
                 )
                 return code
+
             await self.log(
                 updater,
                 role,
@@ -181,45 +188,52 @@ class ScenarioRunner:
         return best_code
 
     @staticmethod
-    def easy_prompt(
-            *,
-            expected_endpoints: list[str],
-            query_text: str,
-            **_
-    ) -> str:
+    def easy_prompt(*, expected_endpoints: list[str], query_text: str, **_) -> str:
         return f"""
-               Generate Python code for this query:
-               Query: {query_text}
+        Generate Python code for this query:
+        Query: {query_text}
 
-               You have access to MCP tools to discover available domains and load their OpenAPI specs.
-               Use the tools to find the right domain, load the specs and generate code.
+        You have access to MCP tools to discover available domains and load their OpenAPI specs.
+        Use the tools to find the right domain, load the specs and generate code.
 
-               Expected endpoints to retrieve:
-               {expected_endpoints}
-               """
+        Expected endpoints to retrieve with your code:
+        {expected_endpoints}
+        """
 
     @staticmethod
-    def task_prompt(
-            *,
-            query_text: str,
-            **_
-    ) -> str:
+    def task_prompt(*, query_text: str, **_) -> str:
         return f"""
-               Generate Python code for this query:
-               {query_text}
+        Generate Python code for this query:
+        {query_text}
 
-               You have access to MCP tools to discover available domains and load their OpenAPI specs.
-               Use the tools to find the right domain, load the specs and generate code.
-               """
+        You have access to MCP tools to discover available domains and load their OpenAPI specs.
+        Use the tools to find the right domain, load the specs and generate code.
+        """
 
-    async def run_easy(
-            self,
-            role: str,
-            expected_endpoints: list[str],
-            query_text: str,
-            agent_url: str,
-            updater: TaskUpdater
-    ) -> str:
+    @staticmethod
+    def _rag_easy_prompt(*, expected_endpoints: list[str], query_text: str, **_) -> str:
+        return f"""
+        Generate Python code using for this query:
+        Query: {query_text}
+
+        You should load OpenAPI specifications yourself using an EndpointParser.
+        Use RAG to find the most relevant OpenAPI specs for this query.
+
+        Expected endpoints to retrieve with your code:
+        {expected_endpoints}
+       """
+
+    @staticmethod
+    def _rag_task_prompt(*, query_text: str, **_) -> str:
+        return f"""
+        Generate Python code using for this query:
+        {query_text}
+
+        You should load OpenAPI specifications yourself using an EndpointParser.
+        Use RAG to find the most relevant OpenAPI specs for this query.
+        """
+
+    async def run_easy(self, role, expected_endpoints, query_text, agent_url, updater, instance_id):
         config = ScenarioConfig(
             level="easy",
             max_attempts=3,
@@ -228,16 +242,10 @@ class ScenarioRunner:
             prompt_builder=self.easy_prompt
         )
         return await self.run_core(
-            role, agent_url, updater, config, query_text
+            role, agent_url, updater, config, query_text, instance_id, mode="code"
         )
 
-    async def run_medium(
-            self,
-            role: str,
-            query_text: str,
-            agent_url: str,
-            updater: TaskUpdater
-    ) -> str:
+    async def run_medium(self, role, query_text, agent_url, updater, instance_id):
         config = ScenarioConfig(
             level="medium",
             max_attempts=3,
@@ -245,16 +253,10 @@ class ScenarioRunner:
             prompt_builder=self.task_prompt
         )
         return await self.run_core(
-            role, agent_url, updater, config, query_text
+            role, agent_url, updater, config, query_text, instance_id, mode="code"
         )
 
-    async def run_hard(
-            self,
-            role: str,
-            query_text: str,
-            agent_url: str,
-            updater: TaskUpdater
-    ) -> str:
+    async def run_hard(self, role, query_text, agent_url, updater, instance_id):
         config = ScenarioConfig(
             level="hard",
             max_attempts=1,
@@ -262,5 +264,35 @@ class ScenarioRunner:
             prompt_builder=self.task_prompt
         )
         return await self.run_core(
-            role, agent_url, updater, config, query_text
+            role, agent_url, updater, config, query_text, instance_id, mode="code"
         )
+
+    async def run_rag_easy(self, role, expected_endpoints, query_text, agent_url, updater, instance_id):
+
+        config = ScenarioConfig(
+            level="rag_easy",
+            max_attempts=3,
+            requires_confirmation=True,
+            expected_endpoints=expected_endpoints,
+            prompt_builder=self._rag_easy_prompt
+        )
+        return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="rag")
+
+    async def run_rag_medium(self, role, query_text, agent_url, updater, instance_id):
+        config = ScenarioConfig(
+            level="rag_medium",
+            max_attempts=3,
+            requires_confirmation=True,
+            prompt_builder=self._rag_task_prompt
+        )
+        return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="rag")
+
+    async def run_rag_hard(self, role, query_text, agent_url, updater, instance_id):
+        config = ScenarioConfig(
+            level="rag_hard",
+            max_attempts=1,
+            requires_confirmation=False,
+            prompt_builder=self._rag_task_prompt
+        )
+        return await self.run_core(
+            role, agent_url, updater, config, query_text, instance_id, mode="rag")

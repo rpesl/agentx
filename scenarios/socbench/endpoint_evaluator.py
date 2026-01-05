@@ -1,6 +1,5 @@
 import re
 
-
 def compute_f1(precision: float, recall: float) -> float:
     if precision + recall == 0:
         return 0.0
@@ -16,6 +15,7 @@ def normalize_endpoint(endpoint: str) -> str:
     method, path = match.groups()
     path = path.strip()
 
+    path = re.sub(r"^/api/v[0-9]+/", "/", path)
     path = re.sub(r"^/v[0-9]+/", "/", path)
 
     return f"{method} {path}"

@@ -11,7 +11,6 @@ from mcp_tools import get_mcp_tools_for_openai, execute_mcp_tool
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PurpleExecutor")
 
-
 class PurpleExecutor(AgentExecutor):
 
     def __init__(self, api_key_env: str = "NEBIUS_API_KEY"):
@@ -23,72 +22,101 @@ class PurpleExecutor(AgentExecutor):
             base_url="https://api.tokenfactory.nebius.com/v1/",
             api_key=self.api_key
         )
-        logger.info("PurpleExecutor initialized")
 
     @staticmethod
     def clean_generated_code(text: str) -> str:
-        logger.info(f"Cleaning code - input length: {len(text)} chars")
         text = text.encode("ascii", "ignore").decode()
         code_blocks = re.findall(r"```(?:[\w+-]*)?\n(.*?)```", text, re.DOTALL)
-        logger.info(f"Found {len(code_blocks)} code blocks")
-
         if code_blocks:
             filtered_blocks = [
                 block.strip() for block in code_blocks
                 if block.strip() and not block.strip().startswith("pip install")
             ]
-            logger.info(f"Filtered to {len(filtered_blocks)} valid blocks")
 
             if filtered_blocks:
                 cleaned = max(filtered_blocks, key=len)
-                logger.info(f"Selected largest block: {len(cleaned)} chars")
                 cleaned = re.sub(r"^#.*\n", "", cleaned)
-                logger.info(f"After removing comments: {len(cleaned)} chars")
                 return cleaned
             return ""
-        logger.info("No code blocks found, returning raw text")
         return text.strip()
 
     @staticmethod
     def clean_text(text: str) -> str:
-        logger.info(f"Cleaning text - input: {len(text)} chars")
         result = text.encode("ascii", "ignore").decode().strip()
-        logger.info(f"Cleaned text - output: {len(result)} chars")
         return result
 
-    async def generate_code_with_mcp(self, prompt: str) -> str:
+    async def generate_code_with_rag_mcp(self, prompt: str, instance_id: int) -> str:
+        system_message = f"""
+        You are a code generation assistant specialized in creating Python code based on OpenAPI specifications.
+
+        You have access to MCP (Model Context Protocol) tools INCLUDING RAG capabilities for loading OpenAPI specifications on-demand.
+
+        You must ONLY use domains from instance '{instance_id}'.
+
+        AVAILABLE MCP TOOLS:
+        - list_available_domains(instance_id={instance_id}): List available domains from the specified instance
+        - retrieve_relevant_specs_with_rag(domain_path, query): Use RAG to get ONLY the most relevant specs based on the query
+
+        WORKFLOW FOR RAG:
+        1. Use list_available_domains(instance_id={instance_id}) to see available domains
+        2. Identify the most relevant domain based on the user's query. You must only choose one domain from the provided list.
+        3. Use retrieve_relevant_specs_with_rag(domain_path, query) to only get relevant specs via semantic search
+        4. Generate Python code using the 'requests' library based on the loaded specs
+        5. Return ONLY the Python code, no explanations
         """
-        Generiert Code und lädt OpenAPI Specs automatisch via MCP.
-        Der Agent entscheidet selbst, welche Domain er braucht!
+
+        tools = get_mcp_tools_for_openai(include_rag=True)
+
+        return await self._generate_code_mcp_core(
+            prompt=prompt,
+            system_message=system_message,
+            tools=tools,
+            log_rag=True
+        )
+
+    async def generate_code_with_mcp(self, prompt: str, instance_id: int) -> str:
+        system_message = f"""
+        You are a code generation assistant specialized in creating Python code based on OpenAPI specifications.
+
+        You have access to MCP (Model Context Protocol) tools to load OpenAPI specifications on-demand.
+
+        You must ONLY use domains from instance '{instance_id}'.
+
+        AVAILABLE MCP TOOLS:
+        - list_available_domains(instance_id={instance_id}): List available domains from the specified instance
+        - load_openapi_specs(domain_path): Load OpenAPI specs from a domain
+
+        WORKFLOW:
+        1. Use list_available_domains(instance_id={instance_id}) to see available domains in this instance
+        2. Identify the most relevant domain based on the user's query. You must only choose one domain from the provided list.
+        3. Use load_openapi_specs() with the full domain path to get the OpenAPI specs
+        4. Generate Python code using the 'requests' library based on the loaded specs
+        5. Return ONLY the Python code, no explanations
         """
-        logger.info("Starting code generation with MCP")
-        logger.info(f"Prompt length: {len(prompt)} chars")
-        logger.info(f"Prompt preview: {prompt[:200]}...")
 
-        system_message = """You are a code generation assistant specialized in creating Python code based on OpenAPI specifications.
+        tools = get_mcp_tools_for_openai(include_rag=False)
 
-You have access to MCP (Model Context Protocol) tools to load OpenAPI specifications on-demand.
+        return await self._generate_code_mcp_core(
+            prompt=prompt,
+            system_message=system_message,
+            tools=tools,
+            log_rag=False
+        )
 
-AVAILABLE MCP TOOLS:
-- list_available_domains(): List available benchmark domains
-- load_openapi_specs(): Load OpenAPI specs from the domain
-
-WORKFLOW:
-1. Use the list_available_domains tool to find relevant domains
-2. Use the load_openapi_specs tool to get the OpenAPI specifications
-3. Analyze the specs to understand available endpoints
-4. Generate Python code using the 'requests' library
-5. Return ONLY the Python code, no explanations
-"""
-        logger.info("System message configured")
+    async def _generate_code_mcp_core(
+            self,
+            *,
+            prompt: str,
+            system_message: str,
+            tools: list,
+            log_rag: bool
+    ) -> str:
 
         messages = [
             {"role": "system", "content": system_message},
             {"role": "user", "content": prompt}
         ]
-        logger.info(f"Messages prepared: {len(messages)} messages")
 
-        tools = get_mcp_tools_for_openai()
         logger.info(f"Available tools: {[t['function']['name'] for t in tools]}")
 
         try:
@@ -100,9 +128,6 @@ WORKFLOW:
                 tool_choice="auto"
             )
             logger.info("LLM responded successfully")
-            has_tools = bool(response.choices[0].message.tool_calls)
-            logger.info(f"Response has tool_calls: {has_tools}")
-
         except Exception as e:
             logger.error(f"LLM call failed: {str(e)}", exc_info=True)
             raise
@@ -116,29 +141,27 @@ WORKFLOW:
 
             assistant_message = response.choices[0].message
             messages.append(assistant_message)
-            logger.info(f"Added assistant message, total messages: {len(messages)}")
 
             for tool_call in assistant_message.tool_calls:
                 tool_name = tool_call.function.name
-                tool_args = json.loads(tool_call.function.arguments)
-
-                logger.info(f"Executing tool: {tool_name}")
-                logger.info(f"Tool args: {json.dumps(tool_args, indent=2)}")
 
                 try:
+                    tool_args = json.loads(tool_call.function.arguments)
+                    logger.info(f"Executing tool: {tool_name}")
+                    logger.info(f"Tool args: {json.dumps(tool_args, indent=2)}")
+
                     tool_result = execute_mcp_tool(tool_name, tool_args)
-
-                    if isinstance(tool_result, list):
-                        logger.info(f"Tool result: list with {len(tool_result)} items")
-                        if tool_result and isinstance(tool_result[0], dict):
-                            logger.info(f"First item keys: {list(tool_result[0].keys())}")
-                    elif isinstance(tool_result, dict):
-                        logger.info(f"Tool result: dict with keys: {list(tool_result.keys())}")
-                    else:
-                        logger.info(f"Tool result type: {type(tool_result)}")
-
                     result_str = json.dumps(tool_result)
-                    logger.info(f"Serialized result: {len(result_str)} chars")
+
+                    if log_rag and tool_name == "retrieve_relevant_specs_with_rag":
+                        logger.info("RAG retrieved Specs:")
+                        if isinstance(tool_result, list):
+                            for i, spec in enumerate(tool_result):
+                                if isinstance(spec, dict):
+                                    title = spec.get("info", {}).get("title", "Unknown")
+                                    paths = list(spec.get("paths", {}).keys())
+                                    logger.info(f"Spec {i + 1}: {title}")
+                                    logger.info(f"  Sample paths: {paths}")
 
                 except Exception as e:
                     logger.error(f"Tool execution failed: {str(e)}", exc_info=True)
@@ -149,7 +172,6 @@ WORKFLOW:
                     "tool_call_id": tool_call.id,
                     "content": result_str
                 })
-                logger.info(f"Added tool result, total messages: {len(messages)}")
 
             try:
                 logger.info(f"Calling LLM with tool results (iteration {iteration})...")
@@ -159,34 +181,18 @@ WORKFLOW:
                     tools=tools,
                     tool_choice="auto"
                 )
-
-                has_tool_calls = bool(response.choices[0].message.tool_calls)
-                logger.info(f"LLM responded. Has more tool_calls: {has_tool_calls}")
-
-                if has_tool_calls:
-                    logger.info(f"LLM wants {len(response.choices[0].message.tool_calls)} more tool call(s)")
-                else:
-                    logger.info("LLM is done with tools - will generate final code")
-
             except Exception as e:
                 logger.error(f"LLM call failed: {str(e)}", exc_info=True)
                 raise
 
-        logger.info("Exiting tool loop - processing final response")
         final_response = response.choices[0].message.content
-        logger.info(f"Final response length: {len(final_response)} chars")
-        logger.info(f"Final response preview: {final_response[:300]}...")
+        if final_response is None:
+            final_response = ""
 
         cleaned_code = self.clean_generated_code(final_response)
-        logger.info(f"Code generation complete: {len(cleaned_code)} chars, {len(cleaned_code.split(chr(10)))} lines")
-        logger.info(f"Code preview: {cleaned_code[:500]}...")
-
         return cleaned_code
 
     async def generate_text(self, prompt: str) -> str:
-        logger.info("Starting confirmation generation")
-        logger.info(f"Prompt length: {len(prompt)} chars")
-        logger.info(f"Prompt: {prompt[:200]}...")
 
         response = self.client.chat.completions.create(
             model="moonshotai/Kimi-K2-Instruct",
@@ -204,26 +210,17 @@ WORKFLOW:
         )
 
         result = self.clean_text(response.choices[0].message.content.strip())
-        logger.info(f"Confirmation generated: {len(result)} chars")
-        logger.info(f"Result: {result}")
         return result
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        logger.info("=" * 80)
-        logger.info("PurpleExecutor.execute() called")
-        logger.info("=" * 80)
 
         request_text = context.get_user_input()
-        logger.info(f"Raw request text length: {len(request_text)} chars")
-        logger.info(f"Raw request: {request_text}")
 
         try:
             request_data = json.loads(request_text)
             prompt = request_data.get("prompt", "")
             mode = request_data.get("mode", "code")
-
-            logger.info(f"Parsed JSON successfully - Mode: {mode}")
-            logger.info(f"Prompt length: {len(prompt)} chars")
+            instance_id = request_data.get("instance_id")
             logger.info(f"Prompt: {prompt}")
 
         except json.JSONDecodeError as e:
@@ -253,24 +250,26 @@ WORKFLOW:
 
         from a2a.server.tasks import TaskUpdater
         updater = TaskUpdater(event_queue, task.id, task.context_id)
-        logger.info("TaskUpdater created")
 
         try:
             if mode == "confirm":
                 logger.info("Mode: CONFIRMATION")
                 result = await self.generate_text(prompt)
+            elif mode == "rag":
+                logger.info("Mode: RAG CODE GENERATION")
+                result = await self.generate_code_with_rag_mcp(prompt, instance_id)
             else:
                 logger.info("Mode: CODE GENERATION")
-                result = await self.generate_code_with_mcp(prompt)
+                result = await self.generate_code_with_mcp(prompt, instance_id)
 
-            logger.info("Generation complete")
-            logger.info(f"Result preview: {result[:300]}...")
+            logger.info(f"Result preview:\n"
+                        f"{result[:1000]}..."
+                        )
 
             await updater.complete(
                 message=new_agent_text_message(result, context_id=context.context_id)
             )
             logger.info("Task completed successfully")
-            logger.info("=" * 80)
 
         except Exception as e:
             logger.error(f"Execution failed: {str(e)}", exc_info=True)
@@ -281,7 +280,6 @@ WORKFLOW:
                     context_id=context.context_id
                 )
             )
-            logger.info("=" * 80)
 
     async def cancel(self, request: RequestContext, event_queue: EventQueue):
         return None
