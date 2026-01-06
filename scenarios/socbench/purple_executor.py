@@ -103,6 +103,7 @@ class PurpleExecutor(AgentExecutor):
             log_rag=False
         )
 
+
     async def _generate_code_mcp_core(
             self,
             *,

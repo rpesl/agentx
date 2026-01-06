@@ -10,7 +10,7 @@ mcp = FastMCP(
     json_response=True
 )
 BENCHMARK_ROOT = Path("scenarios/socbench/benchmark")
-
+RESTBENCH_ROOT = Path("scenarios/socbench/benchmark/restbench/data/specs")
 
 def _setup_embedding_model():
     try:
@@ -26,7 +26,7 @@ _setup_embedding_model()
 
 
 @mcp.tool()
-def list_available_domains(instance_id: int = None) -> list[dict]:
+def list_available_domains(instance_id: str | int = None) -> list[dict]:
     """
     List all available benchmark domains.
 
@@ -37,6 +37,18 @@ def list_available_domains(instance_id: int = None) -> list[dict]:
         List of dicts with domain info: {"path": "socbenchd_1/01-energy", "name": "Energy", "services": [...]}
     """
     domains = []
+
+    if str(instance_id).lower() == "restbench":
+        if RESTBENCH_ROOT.exists():
+            for spec_file in sorted(RESTBENCH_ROOT.glob("*_oas.json")):
+                service_name = spec_file.stem.replace("_oas", "").capitalize()
+                domain_path = f"restbench/data/specs/{spec_file.name}"
+                domains.append({
+                    "path": domain_path,
+                    "name": service_name
+                })
+
+        return domains
 
     for benchmark_dir in sorted(BENCHMARK_ROOT.iterdir()):
         if benchmark_dir.is_dir() and benchmark_dir.name.startswith("socbenchd"):
@@ -80,11 +92,15 @@ def load_openapi_specs(domain_path: str) -> list[dict]:
     First call list_available_domains() to see what domains are available!
 
     Args:
-        domain_path: Relative path like "socbenchd_1/01-energy"
+        domain_path: Relative path like
+                     - "socbenchd_1/01-energy"
+                     - "restbench/data/specs/spotify_oas.json"
 
     Returns:
         List of OpenAPI specification dictionaries
     """
+    openapis = []
+
     full_path = BENCHMARK_ROOT / domain_path
 
     if not full_path.exists():
@@ -92,8 +108,14 @@ def load_openapi_specs(domain_path: str) -> list[dict]:
             f"Domain path not found: {domain_path}. "
             f"Use list_available_domains() to see available options."
         )
-
-    openapis = []
+    if full_path.is_file() and full_path.suffix == ".json":
+        try:
+            with open(full_path, "r", encoding="utf-8") as f:
+                spec = json.load(f)
+                openapis.append(spec)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to load RestBench spec {full_path}: {e}")
+        return openapis
 
     for entry in sorted(full_path.iterdir()):
         if entry.is_dir():
@@ -131,7 +153,7 @@ def retrieve_relevant_specs_with_rag(domain_path: str, query: str) -> list[dict]
     try:
         instance_id = int(domain_path.split("_")[1].split("/")[0])
     except (IndexError, ValueError):
-        instance_id = 1
+        instance_id = "restbench"
 
     rag_retriever = RAGRetriever(
         openapi_specs=all_specs_json,

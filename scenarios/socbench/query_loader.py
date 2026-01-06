@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import List, Tuple
 
-class QueryLoader:
+class SOCBenchQueryLoader:
     def __init__(self, benchmark_root: str):
         self.benchmark_root = Path(benchmark_root)
         self.domain_idx = 0
@@ -38,3 +38,28 @@ class QueryLoader:
             self.instance_idx = (self.instance_idx + 1) % len(self.instances)
         domain_fs = self.benchmark_root / f"socbenchd_{instance_id}" / domain_name
         return domain_fs
+
+class RestBenchQueryLoader:
+    def __init__(self, restbench_root: str):
+        self.restbench_root = Path(restbench_root)
+        self.files = [
+            self.restbench_root / "datasets" / "spotify.json",
+            self.restbench_root / "datasets" / "tmdb.json",
+        ]
+        self.file_idx = 0
+        self.query_idx = 0
+        self.cache = {}
+
+    def load_query(self) -> Tuple[str, List[str]]:
+        file_path = self.files[self.file_idx % len(self.files)]
+        self.file_idx += 1
+
+        if file_path not in self.cache:
+            with open(file_path, "r") as f:
+                self.cache[file_path] = json.load(f)
+
+        queries = self.cache[file_path]
+        query = queries[self.query_idx % len(queries)]
+        self.query_idx += 1
+
+        return query["query"], query["solution"]

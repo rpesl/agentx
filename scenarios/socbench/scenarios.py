@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from re import Pattern
 from typing import Callable, Optional
 from a2a.server.tasks import TaskUpdater
 from a2a.types import TaskState
@@ -14,7 +15,7 @@ class ScenarioConfig:
     max_attempts: int
     requires_confirmation: bool
     prompt_builder: Callable[..., str]
-    expected_endpoints: Optional[list[str]] = None
+    expected_endpoints: Optional[list[Pattern]] = None
 
 
 class ScenarioRunner:
@@ -40,7 +41,6 @@ class ScenarioRunner:
             retrieved = analysis.perform_analysis()
         except (SyntaxError, ValueError, NotImplementedError):
             return set()
-
         return {normalize_endpoint(ep) for ep in retrieved}
 
     @staticmethod
@@ -74,6 +74,7 @@ class ScenarioRunner:
             query_text: str,
             extracted: set[str]
     ) -> str:
+
         prompt = (
             f"\nYou generated code for the query:\n{query_text}\n"
             f"The static analysis extracted the following endpoints from your code:\n"
@@ -81,14 +82,13 @@ class ScenarioRunner:
             f"Are these the correct endpoints you intended to use?\n"
             f"Please answer with 'Yes' or 'No' and briefly explain."
         )
-
         return await self._tool_provider.talk_to_agent(
             message=json.dumps({
                 "mode": "confirm",
                 "prompt": prompt
             }),
             url=agent_url,
-            new_conversation=True
+            new_conversation=False
         )
 
     async def run_core(
@@ -98,7 +98,7 @@ class ScenarioRunner:
             updater: TaskUpdater,
             config: ScenarioConfig,
             query_text: str,
-            instance_id: int,
+            instance_id: str | int,
             mode: str = "code"
     ) -> str:
 
@@ -221,7 +221,7 @@ class ScenarioRunner:
 
         Expected endpoints to retrieve with your code:
         {expected_endpoints}
-       """
+        """
 
     @staticmethod
     def _rag_task_prompt(*, query_text: str, **_) -> str:
@@ -233,7 +233,30 @@ class ScenarioRunner:
         Use RAG to find the most relevant OpenAPI specs for this query.
         """
 
-    async def run_easy(self, role, expected_endpoints, query_text, agent_url, updater, instance_id):
+    @staticmethod
+    def _restbench_prompt(*, expected_endpoints: list[str], query_text: str, **_) -> str:
+        return f"""
+        Generate Python code for this RestBench query:
+        Query: {query_text}
+
+        You should load OpenAPI specifications yourself using RAG.
+        Use RAG to find the most relevant OpenAPI specs for this query from the RestBench benchmark.
+
+        This query is from the RestBench benchmark (Spotify or TMDB API).
+
+        Expected endpoints to retrieve with your code:
+        {expected_endpoints}
+        """
+
+    async def run_easy(
+            self,
+            role: str,
+            expected_endpoints: list[Pattern],
+            query_text: str,
+            agent_url: str,
+            updater: TaskUpdater,
+            instance_id: int
+    ) -> str:
         config = ScenarioConfig(
             level="easy",
             max_attempts=3,
@@ -241,33 +264,49 @@ class ScenarioRunner:
             expected_endpoints=expected_endpoints,
             prompt_builder=self.easy_prompt
         )
-        return await self.run_core(
-            role, agent_url, updater, config, query_text, instance_id, mode="code"
-        )
+        return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="code")
 
-    async def run_medium(self, role, query_text, agent_url, updater, instance_id):
+    async def run_medium(
+            self,
+            role: str,
+            query_text: str,
+            agent_url: str,
+            updater: TaskUpdater,
+            instance_id: int
+    ) -> str:
         config = ScenarioConfig(
             level="medium",
             max_attempts=3,
             requires_confirmation=True,
             prompt_builder=self.task_prompt
         )
-        return await self.run_core(
-            role, agent_url, updater, config, query_text, instance_id, mode="code"
-        )
+        return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="code")
 
-    async def run_hard(self, role, query_text, agent_url, updater, instance_id):
+    async def run_hard(
+            self,
+            role: str,
+            query_text: str,
+            agent_url: str,
+            updater: TaskUpdater,
+            instance_id: int
+    ) -> str:
         config = ScenarioConfig(
             level="hard",
             max_attempts=1,
             requires_confirmation=False,
             prompt_builder=self.task_prompt
         )
-        return await self.run_core(
-            role, agent_url, updater, config, query_text, instance_id, mode="code"
-        )
+        return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="code")
 
-    async def run_rag_easy(self, role, expected_endpoints, query_text, agent_url, updater, instance_id):
+    async def run_rag_easy(
+            self,
+            role: str,
+            expected_endpoints: list[Pattern],
+            query_text: str,
+            agent_url: str,
+            updater: TaskUpdater,
+            instance_id: int
+    ) -> str:
 
         config = ScenarioConfig(
             level="rag_easy",
@@ -278,7 +317,14 @@ class ScenarioRunner:
         )
         return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="rag")
 
-    async def run_rag_medium(self, role, query_text, agent_url, updater, instance_id):
+    async def run_rag_medium(
+            self,
+            role: str,
+            query_text: str,
+            agent_url: str,
+            updater: TaskUpdater,
+            instance_id: int
+    ) -> str:
         config = ScenarioConfig(
             level="rag_medium",
             max_attempts=3,
@@ -287,12 +333,35 @@ class ScenarioRunner:
         )
         return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="rag")
 
-    async def run_rag_hard(self, role, query_text, agent_url, updater, instance_id):
+    async def run_rag_hard(
+            self,
+            role: str,
+            query_text: str,
+            agent_url: str,
+            updater: TaskUpdater,
+            instance_id: int
+    ) -> str:
         config = ScenarioConfig(
             level="rag_hard",
             max_attempts=1,
             requires_confirmation=False,
             prompt_builder=self._rag_task_prompt
         )
-        return await self.run_core(
-            role, agent_url, updater, config, query_text, instance_id, mode="rag")
+        return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="rag")
+
+    async def run_restbench(
+            self,
+            role: str,
+            expected_endpoints: list[Pattern],
+            query_text: str,
+            agent_url: str,
+            updater: TaskUpdater
+    ) -> str:
+        config = ScenarioConfig(
+            level="restbench",
+            max_attempts=3,
+            requires_confirmation=True,
+            expected_endpoints=expected_endpoints,
+            prompt_builder=self._restbench_prompt
+        )
+        return await self.run_core(role, agent_url, updater, config, query_text, instance_id="restbench", mode="rag")

@@ -21,7 +21,7 @@ def create_agent_card(agent_url: str) -> AgentCard:
         id='generate_code',
         name='Generate Python Code',
         description=(
-            "Generates Python code based on a query and OpenAPI specifications. "
+            "Generates Python code based on a query and MCP-provided tools."
             "Accepts JSON input with 'prompt' field containing the user's request."
         ),
         tags=['code generation', 'OpenAPI', 'Python'],
@@ -33,7 +33,7 @@ def create_agent_card(agent_url: str) -> AgentCard:
 
     return AgentCard(
         name="code_generation",
-        description='Generates Python code based on queries and OpenAPI specifications.',
+        description='Generates Python code based on queries and MCP-provided tools.',
         url=agent_url,
         version='1.0.0',
         default_input_modes=['text'],

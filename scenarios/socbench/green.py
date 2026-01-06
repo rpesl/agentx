@@ -3,7 +3,7 @@ import toml, uvicorn, asyncio, logging, argparse, contextlib
 from dotenv import load_dotenv
 from pydantic import HttpUrl
 from endpoint_evaluator import normalize_endpoint, normalize_expected_endpoint, match_retrieved_to_expected, compute_f1
-from query_loader import QueryLoader
+from query_loader import SOCBenchQueryLoader, RestBenchQueryLoader
 from scenarios import ScenarioRunner
 from socbenchsc.src.socbenchsc.analysis import Analysis
 from a2a.server.apps import A2AStarletteApplication
@@ -20,7 +20,8 @@ from models import CodeEval, judge_agent_card, CodeScore
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
 BENCHMARK_ROOT = "scenarios/socbench/benchmark"
-SCENARIOS = ["easy", "medium", "hard", "rag_easy", "rag_medium", "rag_hard"]
+RESTBENCH_ROOT = "scenarios/socbench/benchmark/restbench/data"
+SCENARIOS = ["easy", "medium", "hard", "rag_easy", "rag_medium", "rag_hard", "restbench"]
 
 
 class CodeJudge(GreenAgent):
@@ -30,7 +31,9 @@ class CodeJudge(GreenAgent):
         self._required_config_keys = ["num_rounds"]
         self._tool_provider = ToolProvider()
         self.expected_endpoints = []
-        self.query_loader = QueryLoader(BENCHMARK_ROOT)
+        self.restbench_expected_endpoints = []
+        self.query_loader = SOCBenchQueryLoader(BENCHMARK_ROOT)
+        self.restbench_loader = RestBenchQueryLoader(RESTBENCH_ROOT)
         self.scenario_runner = ScenarioRunner(self._tool_provider)
 
     @staticmethod
@@ -95,28 +98,36 @@ class CodeJudge(GreenAgent):
         }
 
         self.expected_endpoints = []
+        self.restbench_expected_endpoints = []
+
 
         for round_id in range(num_rounds):
 
             domain_path = self.query_loader.get_next_domain()
             query_text, endpoints, instance_id = self.query_loader.load_query(domain_path)
-            self.expected_endpoints.append(endpoints)
+            normalized_endpoints = [normalize_expected_endpoint(ep) for ep in endpoints]
+            self.expected_endpoints.append(normalized_endpoints)
+
+            restbench_query_text, restbench_endpoints = self.restbench_loader.load_query()
+            normalized_restbench_endpoints = [normalize_expected_endpoint(ep) for ep in restbench_endpoints]
+            self.restbench_expected_endpoints.append(normalized_restbench_endpoints)
 
             await updater.update_status(
                 TaskState.working,
                 new_agent_text_message(
-                    f"[Round {round_id + 1}] \n"
+                    f"[Round {round_id + 1}][SOCBench-D] \n"
                     f"Query: {query_text}\n"
                     f"Expected Endpoints: {endpoints}\n"
                 )
             )
 
             for role, agent_url in participants.items():
+
                 url_str = str(agent_url)
 
                 easy_code = await self.scenario_runner.run_easy(
                     role=role,
-                    expected_endpoints=endpoints,
+                    expected_endpoints=normalized_endpoints,
                     query_text=query_text,
                     agent_url=url_str,
                     updater=updater,
@@ -144,7 +155,7 @@ class CodeJudge(GreenAgent):
 
                 rag_easy_code = await self.scenario_runner.run_rag_easy(
                     role=role,
-                    expected_endpoints=endpoints,
+                    expected_endpoints=normalized_endpoints,
                     query_text=query_text,
                     agent_url=url_str,
                     updater=updater,
@@ -170,6 +181,25 @@ class CodeJudge(GreenAgent):
                 )
                 results[role]["rag_hard"].append(rag_hard_code)
 
+                await updater.update_status(
+                    TaskState.working,
+                    new_agent_text_message(
+                        f"[Round {round_id + 1}][RestBench]\n"
+                        f"Query: {restbench_query_text}\n"
+                        f"Expected Endpoints: {restbench_endpoints}\n"
+                    )
+                )
+
+                restbench_code = await self.scenario_runner.run_restbench(
+                    role=role,
+                    expected_endpoints=normalized_restbench_endpoints,
+                    query_text=restbench_query_text,
+                    agent_url=url_str,
+                    updater=updater
+                )
+
+                results[role]["restbench"].append(restbench_code)
+
         return results
 
     async def judge_code(self, code_dict: dict[str, dict[str, list[str]]], updater: TaskUpdater) -> CodeEval:
@@ -184,7 +214,10 @@ class CodeJudge(GreenAgent):
             }
 
             for round_idx in range(num_rounds):
-                expected = self.expected_endpoints[round_idx]
+                if scenario != "restbench":
+                    expected = self.expected_endpoints[round_idx]
+                else:
+                    expected = self.restbench_expected_endpoints[round_idx]
 
                 for agent in code_dict:
                     code = code_dict[agent][scenario][round_idx]
@@ -196,10 +229,9 @@ class CodeJudge(GreenAgent):
                         retrieved = set()
 
                     normalized_retrieved = {normalize_endpoint(ep) for ep in retrieved}
-                    normalized_expected = [normalize_expected_endpoint(ep) for ep in expected]
 
-                    matched = match_retrieved_to_expected(normalized_retrieved, normalized_expected)
-                    recall = round(len(matched) / len(normalized_expected), 2) if normalized_expected else 0.0
+                    matched = match_retrieved_to_expected(normalized_retrieved, expected)
+                    recall = round(len(matched) / len(expected), 2) if expected else 0.0
                     precision = round(len(matched) / len(normalized_retrieved), 2) if normalized_retrieved else 0.0
                     f1 = compute_f1(precision, recall)
 

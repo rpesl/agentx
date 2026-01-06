@@ -23,7 +23,6 @@ def normalize_endpoint(endpoint: str) -> str:
 
 def normalize_expected_endpoint(endpoint: str) -> re.Pattern:
     endpoint = endpoint.strip()
-
     match = re.match(r"([A-Z]+)\s+(.+)", endpoint)
     if not match:
         raise ValueError(f"Invalid endpoint: {endpoint}")
@@ -31,11 +30,10 @@ def normalize_expected_endpoint(endpoint: str) -> re.Pattern:
     method, path = match.groups()
     path = path.strip()
 
-    path_regex = re.sub(r"\{[^}]+}", r"[^/]+", path)
-    path_regex = re.sub(r"<[^>]+>", r"[^/]+", path_regex)
+    path_regex = re.sub(r"\{[^}]+}", r"[^/]*", path)
+    path_regex = re.sub(r"<[^>]+>", r"[^/]*", path_regex)
 
     full_regex = f"^{method} {path_regex}$"
-
     return re.compile(full_regex)
 
 

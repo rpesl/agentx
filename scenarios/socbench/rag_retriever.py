@@ -68,8 +68,11 @@ class RAGRetriever:
             transformations=[EndpointParser()],
         )
 
-    def _load_or_create_index(self, instance_id: int, domain_path: str) -> BaseIndex:
-        cache_path = self.cache_dir / f"instance_{instance_id}" / domain_path.replace("/", "_")
+    def _load_or_create_index(self, instance_id: str | int, domain_path: str) -> BaseIndex:
+        if instance_id == "restbench":
+            cache_path = self.cache_dir / "restbench" / domain_path.replace("/", "_")
+        else:
+            cache_path = self.cache_dir / f"instance_{instance_id}" / domain_path.replace("/", "_")
 
         if cache_path.exists():
             logger.info(f"Loading RAG index from cache: {cache_path}")
@@ -108,7 +111,7 @@ class RAGRetriever:
 
         return None, None, None
 
-    def retrieve(self, query: str, instance_id: int, domain_path: str) -> List[str]:
+    def retrieve(self, query: str, instance_id: str | int, domain_path: str) -> List[str]:
         if self.index is None:
             self.index = self._load_or_create_index(instance_id, domain_path)
 
