@@ -10,11 +10,9 @@ from a2a.types import (
     AgentCard,
     AgentSkill
 )
-
 from purple_executor import PurpleExecutor
 
 load_dotenv()
-
 
 def create_agent_card(agent_url: str) -> AgentCard:
     skill = AgentSkill(

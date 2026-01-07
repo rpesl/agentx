@@ -28,6 +28,7 @@ class SOCBenchQueryLoader:
         query = queries[self.query_idx % len(queries)]
         self.query_idx += 1
         instance_id = int(domain_path.parent.name.split("_")[1])
+
         return query["query"], query["endpoints"], instance_id
 
     def get_next_domain(self) -> Path:
@@ -36,8 +37,9 @@ class SOCBenchQueryLoader:
         self.domain_idx += 1
         if self.domain_idx % len(self.domains) == 0:
             self.instance_idx = (self.instance_idx + 1) % len(self.instances)
-        domain_fs = self.benchmark_root / f"socbenchd_{instance_id}" / domain_name
-        return domain_fs
+        domain_path = self.benchmark_root / f"socbenchd_{instance_id}" / domain_name
+
+        return domain_path
 
 class RestBenchQueryLoader:
     def __init__(self, restbench_root: str):

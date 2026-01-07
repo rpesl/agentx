@@ -100,7 +100,6 @@ class CodeJudge(GreenAgent):
         self.expected_endpoints = []
         self.restbench_expected_endpoints = []
 
-
         for round_id in range(num_rounds):
 
             domain_path = self.query_loader.get_next_domain()
@@ -197,7 +196,6 @@ class CodeJudge(GreenAgent):
                     agent_url=url_str,
                     updater=updater
                 )
-
                 results[role]["restbench"].append(restbench_code)
 
         return results

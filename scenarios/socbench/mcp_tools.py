@@ -47,7 +47,6 @@ def list_available_domains(instance_id: str | int = None) -> list[dict]:
                     "path": domain_path,
                     "name": service_name
                 })
-
         return domains
 
     for benchmark_dir in sorted(BENCHMARK_ROOT.iterdir()):

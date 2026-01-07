@@ -188,7 +188,7 @@ class ScenarioRunner:
         return best_code
 
     @staticmethod
-    def easy_prompt(*, expected_endpoints: list[str], query_text: str, **_) -> str:
+    def _easy_prompt(*, expected_endpoints: list[str], query_text: str, **_) -> str:
         return f"""
         Generate Python code for this query:
         Query: {query_text}
@@ -201,7 +201,7 @@ class ScenarioRunner:
         """
 
     @staticmethod
-    def task_prompt(*, query_text: str, **_) -> str:
+    def _task_prompt(*, query_text: str, **_) -> str:
         return f"""
         Generate Python code for this query:
         {query_text}
@@ -213,7 +213,7 @@ class ScenarioRunner:
     @staticmethod
     def _rag_easy_prompt(*, expected_endpoints: list[str], query_text: str, **_) -> str:
         return f"""
-        Generate Python code using for this query:
+        Generate Python code for this query:
         Query: {query_text}
 
         You should load OpenAPI specifications yourself using an EndpointParser.
@@ -262,7 +262,7 @@ class ScenarioRunner:
             max_attempts=3,
             requires_confirmation=True,
             expected_endpoints=expected_endpoints,
-            prompt_builder=self.easy_prompt
+            prompt_builder=self._easy_prompt
         )
         return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="code")
 
@@ -278,7 +278,7 @@ class ScenarioRunner:
             level="medium",
             max_attempts=3,
             requires_confirmation=True,
-            prompt_builder=self.task_prompt
+            prompt_builder=self._task_prompt
         )
         return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="code")
 
@@ -294,7 +294,7 @@ class ScenarioRunner:
             level="hard",
             max_attempts=1,
             requires_confirmation=False,
-            prompt_builder=self.task_prompt
+            prompt_builder=self._task_prompt
         )
         return await self.run_core(role, agent_url, updater, config, query_text, instance_id, mode="code")
 

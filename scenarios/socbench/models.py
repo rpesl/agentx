@@ -5,17 +5,14 @@ from a2a.types import (
     AgentSkill,
 )
 
-
 class CodeScore(BaseModel):
     recall: float
     precision: float
     f1: float
 
-
 class CodeEval(BaseModel):
     participants: dict[str, CodeScore]
     winner: str
-
 
 def judge_agent_card(agent_name: str, card_url: str) -> AgentCard:
     skill = AgentSkill(
