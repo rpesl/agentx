@@ -249,9 +249,9 @@ class CodeJudge(GreenAgent):
 
             for agent, metrics in intermediate_results.items():
                 scenario_results[scenario][agent] = {
-                    "recall": sum(metrics["recall"]) / len(metrics["recall"]),
-                    "precision": sum(metrics["precision"]) / len(metrics["precision"]),
-                    "f1": sum(metrics["f1"]) / len(metrics["f1"]),
+                    "recall": min(sum(metrics["recall"]) / len(metrics["recall"]), 1.0),
+                    "precision": min(sum(metrics["precision"]) / len(metrics["precision"]), 1.0),
+                    "f1": min(sum(metrics["f1"]) / len(metrics["f1"]), 1.0),
                 }
 
         final_recall_scores = {

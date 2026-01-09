@@ -2,14 +2,18 @@ import json
 import os
 import re
 import logging
+import asyncio
+from contextlib import AsyncExitStack
 from openai import OpenAI
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.utils import new_task, new_agent_text_message
-from mcp_tools import get_mcp_tools_for_openai, execute_mcp_tool
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PurpleExecutor")
+
 
 class PurpleExecutor(AgentExecutor):
 
@@ -22,6 +26,122 @@ class PurpleExecutor(AgentExecutor):
             base_url="https://api.tokenfactory.nebius.com/v1/",
             api_key=self.api_key
         )
+        self.mcp_session: ClientSession | None = None
+        self.exit_stack: AsyncExitStack | None = None
+        self.mcp_initialized = False
+
+    async def _ensure_mcp_connected(self):
+        if self.mcp_initialized:
+            return
+        try:
+            self.exit_stack = AsyncExitStack()
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            possible_paths = [
+                os.path.join(current_dir, "mcp_server.py"),
+                "scenarios/socbench/mcp_server.py",
+                "mcp_server.py"
+            ]
+            mcp_server_path = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    mcp_server_path = os.path.abspath(path)
+                    break
+
+            if not mcp_server_path:
+                raise FileNotFoundError(
+                    f"MCP Server not found in expected locations: {possible_paths}"
+                )
+            server_params = StdioServerParameters(
+                command="python",
+                args=[mcp_server_path],
+                env=os.environ.copy()
+            )
+            logger.info("Connecting to MCP Server...")
+            try:
+                stdio_transport = await asyncio.wait_for(
+                    self.exit_stack.enter_async_context(stdio_client(server_params)),
+                    timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                raise TimeoutError("MCP Server connection timed out")
+
+            stdio, write = stdio_transport
+            logger.info("MCP Server Connection established")
+
+            self.mcp_session = await self.exit_stack.enter_async_context(
+                ClientSession(stdio, write)
+            )
+            await self.mcp_session.initialize()
+            self.mcp_initialized = True
+
+        except Exception as e:
+            logger.error(f"Error initializing MCP connection: {e}", exc_info=True)
+            if self.exit_stack:
+                await self.exit_stack.aclose()
+                self.exit_stack = None
+            raise
+
+    async def _cleanup_mcp(self):
+        if self.exit_stack:
+            try:
+                await self.exit_stack.aclose()
+            except Exception as e:
+                logger.error(f"Error during MCP cleanup: {str(e)}", exc_info=True)
+            finally:
+                self.exit_stack = None
+                self.mcp_session = None
+                self.mcp_initialized = False
+
+    async def _call_mcp_tool(self, tool_name: str, arguments: dict):
+        await self._ensure_mcp_connected()
+
+        try:
+            result = await self.mcp_session.call_tool(tool_name, arguments)
+            if result.content:
+                if hasattr(result.content[0], 'text'):
+                    return result.content[0].text
+                return str(result.content[0])
+            return {}
+        except Exception as e:
+            logger.error(f"MCP Tool call failed: {str(e)}", exc_info=True)
+            return {"error": str(e)}
+
+    async def _list_mcp_tools(self, use_rag: bool = False) -> list[dict]:
+        await self._ensure_mcp_connected()
+
+        tools_list = await self.mcp_session.list_tools()
+        openai_tools = []
+        for tool in tools_list.tools:
+            if not use_rag and tool.name == "retrieve_relevant_specs_with_rag":
+                continue
+            if use_rag and tool.name == "load_openapi_specs":
+                continue
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "parameters": tool.inputSchema
+                }
+            }
+            openai_tools.append(openai_tool)
+
+        logger.info(f"Available OpenAI MCP tools: {[tool['function']['name'] for tool in openai_tools]}")
+        return openai_tools
+
+    @staticmethod
+    def extract_context(message: str) -> tuple[str, dict | None]:
+        match = re.search(r'\[Context:\s*(\{.*?})]', message, re.DOTALL)
+
+        if match:
+            try:
+                context = json.loads(match.group(1))
+                clean_task = re.sub(r'\[Context:.*?]', '', message, flags=re.DOTALL).strip()
+                return clean_task, context
+            except json.JSONDecodeError:
+                logger.warning("Found context marker but couldn't parse JSON")
+
+        return message, None
 
     @staticmethod
     def clean_generated_code(text: str) -> str:
@@ -45,80 +165,42 @@ class PurpleExecutor(AgentExecutor):
         result = text.encode("ascii", "ignore").decode().strip()
         return result
 
-    async def generate_code_with_rag_mcp(self, prompt: str, instance_id: int) -> str:
-        system_message = f"""
-        You are a code generation assistant specialized in creating Python code based on OpenAPI specifications.
+    async def generate_code_with_mcp(self, prompt: str, instance_id: int, use_rag: bool = False) -> str:
+        if use_rag:
+            system_message = f"""
+You are a code generation assistant specialized in creating Python code based on OpenAPI specifications.
 
-        You have access to MCP (Model Context Protocol) tools INCLUDING RAG capabilities for loading OpenAPI specifications on-demand.
+You have access to MCP (Model Context Protocol) tools INCLUDING RAG capabilities for loading OpenAPI specifications.
 
-        You must ONLY use domains from instance '{instance_id}'.
+WORKFLOW:
+1. You must ONLY use domains from instance {instance_id}
+2. Call list_available_domains(instance_id={instance_id}) ONCE to see available domains
+3. Choose EXACTLY ONE domain from the list (the domain path like "socbenchd_1/01-energy")
+4. Call retrieve_relevant_specs_with_rag(domain_path, query) ONCE with the chosen domain
+5. Generate Python code using 'requests' library based on the retrieved specs to answer the user's request
+6. Return ONLY Python code, NO explanations
+"""
+        else:
+            system_message = f"""
+You are a code generation assistant specialized in creating Python code based on OpenAPI specifications.
 
-        AVAILABLE MCP TOOLS:
-        - list_available_domains(instance_id={instance_id}): List available domains from the specified instance
-        - retrieve_relevant_specs_with_rag(domain_path, query): Use RAG to get ONLY the most relevant specs based on the query
+You have access to MCP (Model Context Protocol) tools to load OpenAPI specifications.
 
-        WORKFLOW FOR RAG:
-        1. Use list_available_domains(instance_id={instance_id}) to see available domains
-        2. Identify the most relevant domain based on the user's query. You must only choose one domain from the provided list.
-        3. Use retrieve_relevant_specs_with_rag(domain_path, query) to only get relevant specs via semantic search
-        4. Generate Python code using the 'requests' library based on the loaded specs
-        5. Return ONLY the Python code, no explanations
-        """
+WORKFLOW:
+1. You must ONLY use domains from instance {instance_id}
+2. Call list_available_domains(instance_id={instance_id}) ONCE to see available domains
+3. Choose EXACTLY ONE domain from the list (the domain path like "socbenchd_1/01-energy")
+4. Call load_openapi_specs(domain_path) ONCE with the chosen domain path
+5. Generate Python code using 'requests' library based on the loaded specs to answer the user's request
+6. Return ONLY Python code, NO explanations
+"""
 
-        tools = get_mcp_tools_for_openai(include_rag=True)
-
-        return await self._generate_code_mcp_core(
-            prompt=prompt,
-            system_message=system_message,
-            tools=tools,
-            log_rag=True
-        )
-
-    async def generate_code_with_mcp(self, prompt: str, instance_id: int) -> str:
-        system_message = f"""
-        You are a code generation assistant specialized in creating Python code based on OpenAPI specifications.
-
-        You have access to MCP (Model Context Protocol) tools to load OpenAPI specifications on-demand.
-
-        You must ONLY use domains from instance '{instance_id}'.
-
-        AVAILABLE MCP TOOLS:
-        - list_available_domains(instance_id={instance_id}): List available domains from the specified instance
-        - load_openapi_specs(domain_path): Load OpenAPI specs from a domain
-
-        WORKFLOW:
-        1. Use list_available_domains(instance_id={instance_id}) to see available domains in this instance
-        2. Identify the most relevant domain based on the user's query. You must only choose one domain from the provided list.
-        3. Use load_openapi_specs() with the full domain path to get the OpenAPI specs
-        4. Generate Python code using the 'requests' library based on the loaded specs
-        5. Return ONLY the Python code, no explanations
-        """
-
-        tools = get_mcp_tools_for_openai(include_rag=False)
-
-        return await self._generate_code_mcp_core(
-            prompt=prompt,
-            system_message=system_message,
-            tools=tools,
-            log_rag=False
-        )
-
-
-    async def _generate_code_mcp_core(
-            self,
-            *,
-            prompt: str,
-            system_message: str,
-            tools: list,
-            log_rag: bool
-    ) -> str:
+        tools = await self._list_mcp_tools(use_rag=use_rag)
 
         messages = [
             {"role": "system", "content": system_message},
             {"role": "user", "content": prompt}
         ]
-
-        logger.info(f"Available tools: {[t['function']['name'] for t in tools]}")
 
         try:
             logger.info("Calling LLM (1st call)...")
@@ -148,25 +230,16 @@ class PurpleExecutor(AgentExecutor):
 
                 try:
                     tool_args = json.loads(tool_call.function.arguments)
-                    logger.info(f"Executing tool: {tool_name}")
+                    logger.info(f"Calling MCP tool: {tool_name}")
                     logger.info(f"Tool args: {json.dumps(tool_args, indent=2)}")
-
-                    tool_result = execute_mcp_tool(tool_name, tool_args)
-                    result_str = json.dumps(tool_result)
-
-                    if log_rag and tool_name == "retrieve_relevant_specs_with_rag":
-                        logger.info("RAG retrieved Specs:")
-                        if isinstance(tool_result, list):
-                            for i, spec in enumerate(tool_result):
-                                if isinstance(spec, dict):
-                                    title = spec.get("info", {}).get("title", "Unknown")
-                                    paths = list(spec.get("paths", {}).keys())
-                                    logger.info(f"Spec {i + 1}: {title}")
-                                    logger.info(f"  Sample paths: {paths}")
+                    tool_result = await self._call_mcp_tool(tool_name, tool_args)
+                    if isinstance(tool_result, str):
+                        result_str = tool_result
+                    else:
+                        result_str = json.dumps(tool_result)
 
                 except Exception as e:
-                    logger.error(f"Tool execution failed: {str(e)}", exc_info=True)
-                    result_str = json.dumps({"error": str(e)})
+                   result_str = json.dumps({"error": str(e)})
 
                 messages.append({
                     "role": "tool",
@@ -194,7 +267,6 @@ class PurpleExecutor(AgentExecutor):
         return cleaned_code
 
     async def generate_text(self, prompt: str) -> str:
-
         response = self.client.chat.completions.create(
             model="moonshotai/Kimi-K2-Instruct",
             messages=[
@@ -214,18 +286,21 @@ class PurpleExecutor(AgentExecutor):
         return result
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-
         request_text = context.get_user_input()
+        task_description, json_context = self.extract_context(request_text)
 
         try:
-            request_data = json.loads(request_text)
-            prompt = request_data.get("prompt", "")
-            mode = request_data.get("mode", "code")
-            instance_id = request_data.get("instance_id")
-            logger.info(f"Prompt: {prompt}")
+            instance_id = json_context.get("instance_id", 1)
+            scenario = json_context.get("scenario", "")
+            mode = json_context.get("mode", "")
 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parse failed: {str(e)}")
+            if mode == "confirm":
+                logger.info("Execution mode: confirm")
+            else:
+                logger.info(f"Using context hints: scenario={scenario}, instance={instance_id}, mode={mode}")
+
+        except (json.JSONDecodeError, AttributeError) as e:
+            logger.error(f"Failed to parse context JSON: {str(e)}", exc_info=True)
             msg = context.message
             if msg:
                 task = new_task(msg)
@@ -234,7 +309,7 @@ class PurpleExecutor(AgentExecutor):
                 updater = TaskUpdater(event_queue, task.id, task.context_id)
                 await updater.failed(
                     new_agent_text_message(
-                        f"Invalid request format: {str(e)}",
+                        f"Error parsing context JSON: {str(e)}",
                         context_id=context.context_id
                     )
                 )
@@ -253,19 +328,16 @@ class PurpleExecutor(AgentExecutor):
         updater = TaskUpdater(event_queue, task.id, task.context_id)
 
         try:
-            if mode == "confirm":
-                logger.info("Mode: CONFIRMATION")
-                result = await self.generate_text(prompt)
-            elif mode == "rag":
-                logger.info("Mode: RAG CODE GENERATION")
-                result = await self.generate_code_with_rag_mcp(prompt, instance_id)
-            else:
-                logger.info("Mode: CODE GENERATION")
-                result = await self.generate_code_with_mcp(prompt, instance_id)
+            logger.info(f"{task_description}")
 
-            logger.info(f"Result preview:\n"
-                        f"{result[:1000]}..."
-                        )
+            if mode == "confirm":
+                result = await self.generate_text(task_description)
+            else:
+                use_rag = (mode == "rag")
+                logger.info(f"Generating code with MCP (use_rag={use_rag})...")
+                result = await self.generate_code_with_mcp(task_description, instance_id, use_rag)
+
+            logger.info(f"Result preview:\n{result[:1000]}...")
 
             await updater.complete(
                 message=new_agent_text_message(result, context_id=context.context_id)
@@ -274,13 +346,15 @@ class PurpleExecutor(AgentExecutor):
 
         except Exception as e:
             logger.error(f"Execution failed: {str(e)}", exc_info=True)
-
             await updater.failed(
                 new_agent_text_message(
                     f"Error during execution: {str(e)}",
                     context_id=context.context_id
                 )
             )
+        finally:
+            await self._cleanup_mcp()
 
     async def cancel(self, request: RequestContext, event_queue: EventQueue):
+        await self._cleanup_mcp()
         return None

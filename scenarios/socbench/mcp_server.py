@@ -4,27 +4,20 @@ from mcp.server.fastmcp import FastMCP
 from rag_retriever import RAGRetriever
 from llama_index.core import Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-
-mcp = FastMCP(
-    name="SOCBench Tools",
-    json_response=True
-)
+mcp = FastMCP(name="SOCBench Tools", json_response=True)
 BENCHMARK_ROOT = Path("scenarios/socbench/benchmark")
 RESTBENCH_ROOT = Path("scenarios/socbench/benchmark/restbench/data/specs")
 
-def _setup_embedding_model():
+def _initialize_embedding_model():
     try:
         Settings.embed_model = HuggingFaceEmbedding(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
             device="cpu"
         )
     except Exception as e:
-        raise RuntimeError(f"Failed to setup embedding model: {e}")
+        raise
 
-
-_setup_embedding_model()
-
-
+_initialize_embedding_model()
 @mcp.tool()
 def list_available_domains(instance_id: str | int = None) -> list[dict]:
     """
@@ -158,106 +151,11 @@ def retrieve_relevant_specs_with_rag(domain_path: str, query: str) -> list[dict]
         openapi_specs=all_specs_json,
         top_k=5
     )
-
     relevant_specs_json = rag_retriever.retrieve(query, instance_id, domain_path)
     relevant_specs = [json.loads(spec) for spec in relevant_specs_json]
     return relevant_specs
 
 
-def get_mcp_tools_for_openai(include_rag: bool = False) -> list[dict]:
-    """
-    Get MCP tools in OpenAI function calling format.
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
 
-    Args:
-        include_rag: If True, includes RAG tool for semantic search
-    """
-    base_tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "list_available_domains",
-                "description": (
-                    "List all available benchmark domains. "
-                    "Use this FIRST to understand what domains and services are available. "
-                    "Returns info about each domain including its path, name and services."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "instance_id": {
-                            "type": "integer",
-                            "description": "Optional instance ID like 1, 2, etc. If not provided, lists all instances."
-                        }
-                    },
-                    "required": []
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "load_openapi_specs",
-                "description": (
-                    "Load OpenAPI specifications from a benchmark domain. "
-                    "Use list_available_domains() first to find available domains. "
-                    "This loads all service specs for a domain."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "domain_path": {
-                            "type": "string",
-                            "description": "Relative path like 'socbenchd_1/01-energy'"
-                        }
-                    },
-                    "required": ["domain_path"]
-                }
-            }
-        }
-    ]
-    rag_tool = {
-        "type": "function",
-        "function": {
-            "name": "retrieve_relevant_specs_with_rag",
-            "description": (
-                "Use RAG (semantic search) to find the most relevant OpenAPI specifications for a query. "
-                "Call this AFTER finding the right domain with list_available_domains(). "
-                "Returns only the top-k most relevant specifications based on semantic similarity."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "domain_path": {
-                        "type": "string",
-                        "description": "Domain path like 'socbenchd_1/01-energy'"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "The user's query to match against"
-                    },
-                },
-                "required": ["domain_path", "query"]
-            }
-        }
-    }
-    if include_rag:
-        return base_tools + [rag_tool]
-    else:
-        return base_tools
-
-
-def execute_mcp_tool(tool_name: str, arguments: dict):
-    """
-    Execute an MCP tool by name.
-    """
-    if tool_name == "list_available_domains":
-        return list_available_domains(**arguments)
-    elif tool_name == "load_openapi_specs":
-        return load_openapi_specs(**arguments)
-    elif tool_name == "retrieve_relevant_specs_with_rag":
-        return retrieve_relevant_specs_with_rag(**arguments)
-    else:
-        raise ValueError(
-            f"Unknown tool: {tool_name}. "
-            f"Allowed tools: list_available_domains, load_openapi_specs, retrieve_relevant_specs_with_rag"
-        )
