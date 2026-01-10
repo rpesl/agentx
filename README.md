@@ -60,8 +60,8 @@ To run this example manually, start the agent servers in separate terminals and 
 
 After running, you should see an output similar to this.
 
-![Sample output](assets/sample_output.png)
-
+![Sample output](assets/Agentx.jpg)
+![Sample output](assets/Agentx2.jpg)
 ## Project Structure
 ```
 src/
