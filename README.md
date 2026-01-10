@@ -24,7 +24,7 @@ The Green Agent acts as the orchestrator and evaluator. It manages the benchmark
 
 Benchmarks and Tools Supported:
 
-- **SOCBench-D** - multi-domain API code generation benchmark with structured queries, multiple domains and services
+- **SOCBench-D** - multi-domain API code generation benchmark with structured queries, multiple domains and services (https://arxiv.org/pdf/2505.19310)
 - **SOCBench-SC** - static code analysis module for evaluating generated code and extracting referenced API endpoints
 - **RestBench** - real-world REST APIs (Spotify and TMDB)
 
