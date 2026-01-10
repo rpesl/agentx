@@ -81,7 +81,7 @@ scenarios/
    ├─ green.py                 # Green agent: benchmark orchestration and code evaluation (A2A SDK)
    ├─ purple.py                # Purple agent definition
    ├─ purple_executor.py       # Purple agent executor: MCP tool usage, RAG integration, prompting logic
-   ├─ mcp_server.py             # MCP tools for Purple agent
+   ├─ mcp_server.py            # MCP tools for Purple agent
    ├─ rag_retriever.py         # Retrieval logic for RAG-augmented Purple agent
    ├─ scenarios.py             # Scenario execution engine (easy/medium/hard, RAG, RestBench)
    ├─ query_loader.py          # Benchmark query loaders for SOCBench-D and RestBench
