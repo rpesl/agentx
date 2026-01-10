@@ -1,9 +1,11 @@
 ## Abstract
-LLMs are increasingly used to generate code for complex API-driven tasks but evaluating their performance systematically remains challenging. SOCBench-D provides structured queries across multiple domains and services but does not yet support evaluation of autonomous agents. This raises the question whether SOCBench-D can be adapted to assess how well LLM agents perform in a multi-agent setting.
+Autonomous coding agents are increasingly expected to solve complex, real-world API tasks involving multiple services, dependencies and alternative solution paths. However, most existing benchmarks, including SOCBench-D, implicitly assume simplified one-to-one task–solution mappings and lack support for evaluating agentic behavior in realistic many-to-many (n:m) settings. As a result, current evaluations fail to capture whether an agent truly understands which APIs are required, how they should be combined, and which endpoints should be avoided.
 
-To address this, we introduce a Green Agent that orchestrates benchmark runs for multiple Purple Agents. The Purple Agents generate Python code in response to SOCBench-D queries attempting to fulfill natural-language API tasks. The Green Agent evaluates the generated code by performing static analysis, extracting all referenced API endpoints and computing metrics such as precision, recall and F1 score. It supports multiple scenario types including easy, medium, hard, RAG scenarios as well as real-world REST API queries from RestBench. This allows a comprehensive assessment of code correctness, endpoint coverage and task completion.
+We present a Green Agent that transforms SOCBench-D into a fully agentic, reproducible benchmark within the AgentBeats platform. The Green Agent orchestrates evaluations for multiple Purple Agents that autonomously generate Python code to solve natural-language API tasks. Instead of relying solely on execution success, our approach performs static code analysis to extract all referenced API endpoints and evaluates performance using precision, recall and F1 scores over task-specific ground-truth API sets.
 
-By extending SOCBench-D for agentic evaluation, the framework allows systematic measurement of how effectively LLM agents understand natural-language queries, retrieve API specifications, generate executable Python code and reference the correct endpoints. It provides a flexible and reproducible platform for benchmarking LLM-driven coding agents and offers insights into their strengths, limitations and potential for autonomous API development.
+The benchmark supports a wide range of scenarios, including graded difficulty levels (easy, medium, hard), retrieval-augmented generation (RAG) settings and real-world REST API tasks adapted from RestBench. This design enables fine-grained measurement of endpoint selection accuracy, coverage, overuse and task completion across diverse domains.
+
+By agentifying SOCBench-D and explicitly targeting the n:m task–API evaluation gap, our framework establishes a standardized and extensible benchmark for autonomous coding agents. It provides actionable insights into agents’ ability to reason about API ecosystems, retrieve relevant specifications and generate correct, efficient code-advancing the evaluation of LLM-driven software development in realistic, production-oriented settings.
 ## Overview
 
 The framework evaluates the performance of LLM-driven agents in API code generation tasks. It is designed to test how well agents can:
@@ -79,7 +81,7 @@ scenarios/
    ├─ green.py                 # Green agent: benchmark orchestration and code evaluation (A2A SDK)
    ├─ purple.py                # Purple agent definition
    ├─ purple_executor.py       # Purple agent executor: MCP tool usage, RAG integration, prompting logic
-   ├─ mcp_tools.py             # MCP tools for Purple agent
+   ├─ mcp_server.py             # MCP tools for Purple agent
    ├─ rag_retriever.py         # Retrieval logic for RAG-augmented Purple agent
    ├─ scenarios.py             # Scenario execution engine (easy/medium/hard, RAG, RestBench)
    ├─ query_loader.py          # Benchmark query loaders for SOCBench-D and RestBench
