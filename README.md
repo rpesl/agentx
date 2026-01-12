@@ -47,7 +47,7 @@ Add your Nebius API key to the `.env` file
 
 4. Run the scenarios
 ```
-uv run agentbeats-run scenarios/debate/scenario.toml
+uv run agentbeats-run scenarios/socbench/scenario.toml
 ```
 This command will:
 - Start the agent servers using the commands specified in scenario.toml
