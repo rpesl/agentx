@@ -1,5 +1,4 @@
-from pathlib import Path
-import toml, uvicorn, asyncio, logging, argparse, contextlib
+import uvicorn, asyncio, logging, argparse, contextlib
 from dotenv import load_dotenv
 from pydantic import HttpUrl
 from endpoint_evaluator import normalize_endpoint, normalize_expected_endpoint, match_retrieved_to_expected, compute_f1
@@ -26,8 +25,6 @@ SCENARIOS = ["easy", "medium", "hard", "rag_easy", "rag_medium", "rag_hard", "re
 
 class CodeJudge(GreenAgent):
     def __init__(self):
-        num_agents = self._get_num_agents_from_config()
-        self._required_roles = [f"PurpleAgent_{i}" for i in range(num_agents)]
         self._required_config_keys = ["num_rounds"]
         self._tool_provider = ToolProvider()
         self.expected_endpoints = []
@@ -36,33 +33,15 @@ class CodeJudge(GreenAgent):
         self.restbench_loader = RestBenchQueryLoader(RESTBENCH_ROOT)
         self.scenario_runner = ScenarioRunner(self._tool_provider)
 
-    @staticmethod
-    def _get_num_agents_from_config() -> int:
-        try:
-            config_file = "scenarios/socbench/scenario.toml"
-
-            if not Path(config_file).exists():
-                raise FileNotFoundError(f"{config_file} not found in current directory")
-
-            config_data = toml.load(config_file)
-            participants = config_data.get("participants", [])
-            num_agents = len(participants)
-            return num_agents
-
-        except Exception as e:
-            logging.error(f"Error: {e}")
-            raise
-
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
-        missing_roles = set(self._required_roles) - set(request.participants.keys())
-
-        if missing_roles:
-            return False, f"Missing roles: {missing_roles}"
         missing_config_keys = set(self._required_config_keys) - set(request.config.keys())
 
         if missing_config_keys:
             return False, f"Missing config keys: {missing_config_keys}"
 
+        participants = request.participants
+        if not participants:
+            return False, "No participants provided"
         try:
             int(request.config["num_rounds"])
         except Exception as e:
