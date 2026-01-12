@@ -4,6 +4,7 @@ from mcp.server.fastmcp import FastMCP
 from rag_retriever import RAGRetriever
 from llama_index.core import Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
 mcp = FastMCP(name="SOCBench Tools", json_response=True)
 BENCHMARK_ROOT = Path("scenarios/socbench/benchmark")
 RESTBENCH_ROOT = Path("scenarios/socbench/benchmark/restbench/data/specs")
@@ -18,6 +19,7 @@ def _initialize_embedding_model():
         raise
 
 _initialize_embedding_model()
+
 @mcp.tool()
 def list_available_domains(instance_id: str | int = None) -> list[dict]:
     """

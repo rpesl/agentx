@@ -58,7 +58,6 @@ def print_parts(parts, task_state: str | None = None):
         output.append("\n".join(text_parts))
     if data_parts:
         output.extend(json.dumps(item, indent=2) for item in data_parts)
-
     print("\n".join(output) + "\n")
 
 async def event_consumer(event, card: AgentCard):

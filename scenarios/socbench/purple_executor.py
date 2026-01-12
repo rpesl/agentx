@@ -36,20 +36,11 @@ class PurpleExecutor(AgentExecutor):
         try:
             self.exit_stack = AsyncExitStack()
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            possible_paths = [
-                os.path.join(current_dir, "mcp_server.py"),
-                "scenarios/socbench/mcp_server.py",
-                "mcp_server.py"
-            ]
-            mcp_server_path = None
-            for path in possible_paths:
-                if os.path.exists(path):
-                    mcp_server_path = os.path.abspath(path)
-                    break
+            mcp_server_path = os.path.join(current_dir, "mcp_server.py")
 
             if not mcp_server_path:
                 raise FileNotFoundError(
-                    f"MCP Server not found in expected locations: {possible_paths}"
+                    f"MCP Server not found in {mcp_server_path}"
                 )
             server_params = StdioServerParameters(
                 command="python",
