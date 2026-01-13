@@ -1,11 +1,3 @@
-## Abstract
-Autonomous coding agents are increasingly expected to solve complex, real-world API tasks involving multiple services, dependencies and alternative solution paths. However, most existing benchmarks, including SOCBench-D, implicitly assume simplified one-to-one task–solution mappings and lack support for evaluating agentic behavior in realistic many-to-many (n:m) settings. As a result, current evaluations fail to capture whether an agent truly understands which APIs are required, how they should be combined, and which endpoints should be avoided.
-
-We present a Green Agent that transforms SOCBench-D into a fully agentic, reproducible benchmark within the AgentBeats platform. The Green Agent orchestrates evaluations for multiple Purple Agents that autonomously generate Python code to solve natural-language API tasks. Instead of relying solely on execution success, our approach performs static code analysis to extract all referenced API endpoints and evaluates performance using precision, recall and F1 scores over task-specific ground-truth API sets.
-
-The benchmark supports a wide range of scenarios, including graded difficulty levels (easy, medium, hard), retrieval-augmented generation (RAG) settings and real-world REST API tasks adapted from RestBench. This design enables fine-grained measurement of endpoint selection accuracy, coverage, overuse and task completion across diverse domains.
-
-By agentifying SOCBench-D and explicitly targeting the n:m task–API evaluation gap, our framework establishes a standardized and extensible benchmark for autonomous coding agents. It provides actionable insights into agents’ ability to reason about API ecosystems, retrieve relevant specifications and generate correct, efficient code-advancing the evaluation of LLM-driven software development in realistic, production-oriented settings.
 ## Overview
 
 The framework evaluates the performance of LLM-driven agents in API code generation tasks. It is designed to test how well agents can:
@@ -57,6 +49,121 @@ This command will:
 **Note:** Use `--show-logs` to see agent outputs during the assessment and `--serve-only` to start agents without running the assessment.
 
 To run this example manually, start the agent servers in separate terminals and then in another terminal run the A2A client on the scenario.toml file to initiate the assessment.
+
+
+# Docker Setup 
+## Step 1: Build Docker Images
+
+First, set your GitHub username:
+
+```bash
+export GITHUB_USERNAME=your-github-username
+```
+
+**Build Green Agent (Judge):**
+```bash
+docker build --platform linux/amd64 \
+  -f Dockerfile.green \
+  -t ghcr.io/$GITHUB_USERNAME/green-agent:latest .
+```
+
+**Build Purple Agent (Code Generator):**
+```bash
+docker build --platform linux/amd64 \
+  -f Dockerfile.purple \
+  -t ghcr.io/$GITHUB_USERNAME/purple-agent:latest .
+```
+
+**Verify images were built:**
+```bash
+docker images | grep agent
+```
+
+Expected output:
+```
+ghcr.io/your-username/green-agent    latest    <image-id>
+ghcr.io/your-username/purple-agent   latest    <image-id>
+```
+
+---
+
+## Step 2: Run Docker Containers
+
+Open multiple terminals and start the agents:
+
+### Terminal 1: Start Green Agent
+
+```bash
+docker run -d -p 9009:9009 \
+  --name green-agent \
+  ghcr.io/$GITHUB_USERNAME/green-agent:latest \
+  --host 0.0.0.0 --port 9009
+```
+
+### Terminal 2: Start Purple Agent
+
+```bash
+docker run -d -p 9018:9018 \
+  --name purple-agent-0 \
+  -e NEBIUS_API_KEY=your_api_key_here \
+  ghcr.io/$GITHUB_USERNAME/purple-agent:latest \
+  --host 0.0.0.0 --port 9018
+```
+---
+
+## Step 3: Verify Containers are Running
+
+**Check all containers:**
+```bash
+docker ps
+```
+
+Expected output:
+```
+CONTAINER ID   IMAGE                    NAMES
+abc123         green-agent:latest       green-agent
+def456         purple-agent:latest      purple-agent-0
+```
+
+**Verify agents are healthy:**
+```bash
+curl http://localhost:9009/.well-known/agent-card.json
+curl http://localhost:9018/.well-known/agent-card.json
+```
+
+You should see JSON agent card responses.
+
+---
+
+## Step 4: Run the Scenario
+ - ...
+
+---
+
+## Cleanup
+
+**Stop all containers:**
+```bash
+docker stop $(docker ps -q)
+```
+
+**Remove containers:**
+```bash
+docker rm $(docker ps -a -q)
+```
+
+**Remove images:**
+```bash
+docker rmi ghcr.io/$GITHUB_USERNAME/green-agent:latest
+docker rmi ghcr.io/$GITHUB_USERNAME/purple-agent:latest
+```
+
+**Full cleanup (including unused images):**
+```bash
+docker system prune -a
+```
+
+---
 
 After running, you should see an output similar to this.
 
