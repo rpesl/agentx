@@ -51,8 +51,8 @@ This command will:
 To run this example manually, start the agent servers in separate terminals and then in another terminal run the A2A client on the scenario.toml file to initiate the assessment.
 
 
-# Docker Setup 
-## Step 1: Build Docker Images
+## Docker Setup 
+### Step 1: Build Docker Images
 
 First, set your GitHub username:
 
@@ -87,14 +87,14 @@ ghcr.io/your-username/purple-agent   latest    <image-id>
 
 ---
 
-## Step 2: Run Docker Containers
+### Step 2: Run Docker Containers
 
 Open multiple terminals and start the agents:
 
 ### Terminal 1: Start Green Agent
 
 ```bash
-docker run -d -p 9009:9009 \
+docker run -p 9009:9009 \
   --name green-agent \
   ghcr.io/$GITHUB_USERNAME/green-agent:latest \
   --host 0.0.0.0 --port 9009
@@ -103,7 +103,7 @@ docker run -d -p 9009:9009 \
 ### Terminal 2: Start Purple Agent
 
 ```bash
-docker run -d -p 9018:9018 \
+docker run -p 9018:9018 \
   --name purple-agent-0 \
   -e NEBIUS_API_KEY=your_api_key_here \
   ghcr.io/$GITHUB_USERNAME/purple-agent:latest \
@@ -111,7 +111,7 @@ docker run -d -p 9018:9018 \
 ```
 ---
 
-## Step 3: Verify Containers are Running
+### Step 3: Verify Containers are Running
 
 **Check all containers:**
 ```bash
@@ -135,12 +135,7 @@ You should see JSON agent card responses.
 
 ---
 
-## Step 4: Run the Scenario
- - ...
-
----
-
-## Cleanup
+### Cleanup
 
 **Stop all containers:**
 ```bash
