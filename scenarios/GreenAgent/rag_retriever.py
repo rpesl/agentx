@@ -83,7 +83,8 @@ class RAGRetriever:
                     persist_dir=str(cache_path),
                 )
                 return load_index_from_storage(storage_context)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to load index from cache: {e}")
                 pass
 
         index = self._create_index()

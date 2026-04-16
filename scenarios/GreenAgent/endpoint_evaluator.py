@@ -1,11 +1,15 @@
 import re
 
+"""
+This module provides functions to evaluate the performance of an endpoint retrieval system by computing precision, recall, and F1 score. 
+It also includes utilities for normalizing and matching API endpoints.
+"""
+
 def compute_f1(precision: float, recall: float) -> float:
     if precision + recall == 0:
         return 0.0
     f1 = 2 * (precision * recall) / (precision + recall)
     return float(round(f1, 2))
-
 
 def normalize_endpoint(endpoint: str) -> str:
     match = re.match(r"([A-Z]+)\s+(.+)", endpoint.strip())

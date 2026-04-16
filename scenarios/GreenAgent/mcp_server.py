@@ -6,8 +6,8 @@ from llama_index.core import Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 mcp = FastMCP(name="SOCBench Tools", json_response=True)
-BENCHMARK_ROOT = Path("scenarios/socbench/benchmark")
-RESTBENCH_ROOT = Path("scenarios/socbench/benchmark/restbench/data/specs")
+BENCHMARK_ROOT = Path("scenarios/GreenAgent/benchmark")
+RESTBENCH_ROOT = Path("scenarios/GreenAgent/benchmark/restbench/data/specs")
 
 def _initialize_embedding_model():
     try:
@@ -15,7 +15,7 @@ def _initialize_embedding_model():
             model_name="sentence-transformers/all-MiniLM-L6-v2",
             device="cpu"
         )
-    except Exception as e:
+    except Exception:
         raise
 
 _initialize_embedding_model()
@@ -159,5 +159,5 @@ def retrieve_relevant_specs_with_rag(domain_path: str, query: str) -> list[dict]
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    mcp.run(transport="sse")
 

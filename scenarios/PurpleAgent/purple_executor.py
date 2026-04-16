@@ -1,19 +1,14 @@
-import json
-import os
-import re
-import logging
-import asyncio
+import json, os, re, logging
 from contextlib import AsyncExitStack
 from openai import OpenAI
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.utils import new_task, new_agent_text_message
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp import ClientSession
+from mcp.client.sse import sse_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PurpleExecutor")
-
 
 class PurpleExecutor(AgentExecutor):
 
@@ -21,7 +16,7 @@ class PurpleExecutor(AgentExecutor):
         self.api_key = os.getenv(api_key_env)
         if not self.api_key:
             raise ValueError(f"Environment variable {api_key_env} not set")
-
+        self.mcp_url = "http://localhost:8000/sse"
         self.client = OpenAI(
             base_url="https://api.tokenfactory.nebius.com/v1/",
             api_key=self.api_key
@@ -32,56 +27,35 @@ class PurpleExecutor(AgentExecutor):
 
     async def _ensure_mcp_connected(self):
         if self.mcp_initialized:
+            logging.info("MCP session already initialized")
             return
+
         try:
             self.exit_stack = AsyncExitStack()
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            mcp_server_path = os.path.join(current_dir, "mcp_server.py")
+            logger.info(f"Connecting to shared MCP Server at {self.mcp_url}")
 
-            if not mcp_server_path:
-                raise FileNotFoundError(
-                    f"MCP Server not found in {mcp_server_path}"
-                )
-            server_params = StdioServerParameters(
-                command="python",
-                args=[mcp_server_path],
-                env=os.environ.copy()
-            )
-            logger.info("Connecting to MCP Server...")
-            try:
-                stdio_transport = await asyncio.wait_for(
-                    self.exit_stack.enter_async_context(stdio_client(server_params)),
-                    timeout=10.0
-                )
-            except asyncio.TimeoutError:
-                raise TimeoutError("MCP Server connection timed out")
-
-            stdio, write = stdio_transport
-            logger.info("MCP Server Connection established")
+            streams = await self.exit_stack.enter_async_context(sse_client(self.mcp_url))
+            stdio, write = streams
 
             self.mcp_session = await self.exit_stack.enter_async_context(
                 ClientSession(stdio, write)
             )
+
             await self.mcp_session.initialize()
             self.mcp_initialized = True
+            logger.info("Successfully connected to shared MCP session")
 
         except Exception as e:
-            logger.error(f"Error initializing MCP connection: {e}", exc_info=True)
-            if self.exit_stack:
-                await self.exit_stack.aclose()
-                self.exit_stack = None
+            logger.error(f"Failed to connect to central MCP: {e}")
+            self.mcp_initialized = False
             raise
 
     async def _cleanup_mcp(self):
         if self.exit_stack:
-            try:
-                await self.exit_stack.aclose()
-            except Exception as e:
-                logger.error(f"Error during MCP cleanup: {str(e)}", exc_info=True)
-            finally:
-                self.exit_stack = None
-                self.mcp_session = None
-                self.mcp_initialized = False
+            await self.exit_stack.aclose()
+            self.exit_stack = None
+            self.mcp_session = None
+            self.mcp_initialized = False
 
     async def _call_mcp_tool(self, tool_name: str, arguments: dict):
         await self._ensure_mcp_connected()

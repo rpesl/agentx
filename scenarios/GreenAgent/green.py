@@ -1,4 +1,4 @@
-import uvicorn, asyncio, logging, argparse, contextlib
+import uvicorn, asyncio, logging, argparse, contextlib, subprocess, socket, sys
 from dotenv import load_dotenv
 from pydantic import HttpUrl
 from endpoint_evaluator import normalize_endpoint, normalize_expected_endpoint, match_retrieved_to_expected, compute_f1
@@ -18,10 +18,15 @@ from models import CodeEval, judge_agent_card, CodeScore
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
-BENCHMARK_ROOT = "scenarios/socbench/benchmark"
-RESTBENCH_ROOT = "scenarios/socbench/benchmark/restbench/data"
+BENCHMARK_ROOT = "scenarios/GreenAgent/benchmark"
+RESTBENCH_ROOT = "scenarios/GreenAgent/benchmark/restbench/data"
 SCENARIOS = ["easy", "medium", "hard", "rag_easy", "rag_medium", "rag_hard", "restbench"]
 
+"""
+This agent orchestrates the code generation and evaluation process for the SOCBench and RestBench benchmarks. 
+It runs multiple rounds of code generation for each participant agent, evaluates the generated code against expected API endpoints,
+and computes recall, precision, and F1 scores to determine a winner.
+"""
 
 class CodeJudge(GreenAgent):
     def __init__(self):
@@ -264,6 +269,9 @@ class CodeJudge(GreenAgent):
             winner=f"Winner: {winner} (combined Recall = {final_recall_scores[winner]})"
         )
 
+def is_port_open(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
 
 async def main():
     parser = argparse.ArgumentParser(description="Run the A2A code generation agent.")
@@ -274,29 +282,52 @@ async def main():
                         help="Use a Cloudflare quick tunnel. Requires cloudflared. This will override --card-url")
     args = parser.parse_args()
 
-    if args.cloudflare_quick_tunnel:
-        from agentbeats.cloudflare import quick_tunnel
-        agent_url_cm = quick_tunnel(f"http://{args.host}:{args.port}")
-    else:
-        agent_url_cm = contextlib.nullcontext(args.card_url or f"http://{args.host}:{args.port}/")
+    logging.info("Starting MCP Server on port 8000...")
+    mcp_process = subprocess.Popen(
+        [sys.executable, "scenarios/GreenAgent/mcp_server.py"],
+        stdout=None,
+        stderr=None
+    )
 
-    async with agent_url_cm as agent_url:
-        agent = CodeJudge()
-        executor = GreenExecutor(agent)
-        agent_card = judge_agent_card("CodeJudge", str(agent_url))
-        request_handler = DefaultRequestHandler(
+    retries = 0
+    while not is_port_open(8000) and retries < 10:
+        logging.info("Waiting for MCP Server to bind to port 8000...")
+        await asyncio.sleep(1)
+        retries += 1
+
+    if not is_port_open(8000):
+        logging.error("MCP Server failed to start in time!")
+        mcp_process.terminate()
+        return
+    logging.info("MCP Server is up and running on port 8000.")
+
+    try:
+        if args.cloudflare_quick_tunnel:
+         from agentbeats.cloudflare import quick_tunnel
+         agent_url_cm = quick_tunnel(f"http://{args.host}:{args.port}")
+        else:
+         agent_url_cm = contextlib.nullcontext(args.card_url or f"http://{args.host}:{args.port}/")
+
+        async with agent_url_cm as agent_url:
+          agent = CodeJudge()
+          executor = GreenExecutor(agent)
+          agent_card = judge_agent_card("CodeJudge", str(agent_url))
+          request_handler = DefaultRequestHandler(
             agent_executor=executor,
             task_store=InMemoryTaskStore(),
-        )
+          )
 
-        server = A2AStarletteApplication(
+          server = A2AStarletteApplication(
             agent_card=agent_card,
             http_handler=request_handler,
-        )
+          )
 
-        uvicorn_config = uvicorn.Config(server.build(), host=args.host, port=args.port)
-        uvicorn_server = uvicorn.Server(uvicorn_config)
-        await uvicorn_server.serve()
+          uvicorn_config = uvicorn.Config(server.build(), host=args.host, port=args.port)
+          uvicorn_server = uvicorn.Server(uvicorn_config)
+          await uvicorn_server.serve()
+    finally:
+        logging.info("Shutting down MCP Server...")
+        mcp_process.terminate()
 
 
 if __name__ == '__main__':
