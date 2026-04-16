@@ -10,7 +10,8 @@ from a2a.types import (
     AgentCard,
     AgentSkill
 )
-from purple_executor import PurpleExecutor
+from single_executor import SingleExecutor
+from multi_executor import MultiExecutor
 
 load_dotenv()
 
@@ -45,12 +46,17 @@ async def main():
     parser = argparse.ArgumentParser(description="Run the A2A code generation agent.")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind the server")
     parser.add_argument("--port", type=int, default=9019, help="Port to bind the server")
+    parser.add_argument("--type", type=str, default="single", choices=["single", "multi", "parallel"])
     parser.add_argument("--card-url", type=str, help="External URL to provide in the agent card")
     args = parser.parse_args()
 
     agent_url = args.card_url or f'http://{args.host}:{args.port}/'
 
-    executor = PurpleExecutor()
+    if args.type == "multi":
+        executor = MultiExecutor()
+    else:
+        executor = SingleExecutor()
+
     agent_card = create_agent_card(agent_url)
 
     request_handler = DefaultRequestHandler(
