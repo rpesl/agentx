@@ -27,6 +27,7 @@ class AuditorExecutor(BaseExecutor):
     """
 
     async def run_logic(self, task_description: str, context: dict) -> str:
+        """Main entry point for the auditor executor."""
         mode = context.get("mode", "audit")
         instance_id = context.get("instance_id", 1)
 
@@ -47,6 +48,7 @@ class AuditorExecutor(BaseExecutor):
         return message
 
     async def _lightweight_confirm(self, prompt: str) -> str:
+        """A quick check to see if the generated endpoints even remotely match the task, without calling any tools."""
         system_msg: ChatCompletionSystemMessageParam = {
             "role": "system",
             "content": (
@@ -58,42 +60,40 @@ class AuditorExecutor(BaseExecutor):
         user_msg: ChatCompletionUserMessageParam = {"role": "user", "content": prompt}
 
         response = self.client.chat.completions.create(
-            model="moonshotai/Kimi-K2-Instruct",
+            model="NousResearch/Hermes-4-405B",
             messages=[system_msg, user_msg],
         )
         return self.clean_text(response.choices[0].message.content.strip())
 
     async def _mcp_audit(
-        self,
-        task_description: str,
-        code: str,
-        instance_id: int | str,
-        context: dict,
+            self,
+            task_description: str,
+            code: str,
+            instance_id: int | str,
+            context: dict,
     ) -> str:
+        """Performs a detailed audit of the generated code against real OpenAPI specs via MCP tools."""
         use_rag = context.get("mode") == "rag"
         tools = await self._list_mcp_tools(use_rag=use_rag)
 
         system_msg: ChatCompletionSystemMessageParam = {
             "role": "system",
             "content": f"""
-You are an independent API Auditor. You did NOT write the code.
-Your job: verify every API endpoint used in the code against the REAL OpenAPI specs for instance {instance_id}.
+You are a High-Recall API Auditor. Your goal is to ensure EVERY endpoint needed for the task is present. Instance ID: {instance_id}.
 
-STEPS:
-1. Call list_available_domains(instance_id={instance_id}) to find available domains.
-2. For each relevant domain, call load_openapi_specs (or retrieve_relevant_specs_with_rag) to get real specs.
-3. For each endpoint used in the code, check:
-   - Is the HTTP method correct?
-   - Is the path correct (exact match, including path params)?
-   - Are required parameters present?
-4. Return a JSON object with this structure:
+RECALL STRATEGY:
+1. EXPLORE: Use list_available_domains. Don't just look at the code's domains; look at ALL domains that might fit the task description.
+2. SEARCH: For each domain, use load_openapi_specs. Search for keywords from the task (e.g., if the task is 'get user energy', search for 'user', 'energy', 'meter', 'reading').
+3. VALIDATE: If the code uses 'GET /data', but the spec shows 'GET /v2/data' is the correct one, mark it as 'wrong' AND list the correct one.
+4. FILL THE GAPS: If the task requires 3 steps (Auth -> List -> Get) but the code only does 2, list the missing one in "missing".
+
+OUTPUT JSON:
 {{
-  "confirmed": ["METHOD /path", ...],
-  "wrong": [{{"used": "METHOD /path", "correct": "METHOD /real-path", "reason": "..."}}],
-  "missing": ["METHOD /path that should be used but isn't"],
-  "summary": "One-sentence verdict"
+  "confirmed": ["METHOD /path"],
+  "wrong": [{{"used": "...", "correct": "...", "reason": "..."}}],
+  "missing": ["METHOD /path (Reason why it is needed)"],
+  "summary": "..."
 }}
-Return ONLY the JSON object, no other text.
 """.strip(),
         }
 
@@ -108,7 +108,7 @@ Return ONLY the JSON object, no other text.
         messages: list[ChatCompletionMessageParam] = [system_msg, user_msg]
 
         response = self.client.chat.completions.create(
-            model="moonshotai/Kimi-K2-Instruct",
+            model="NousResearch/Hermes-4-405B",
             messages=messages,
             tools=tools,
             tool_choice="auto",
@@ -149,7 +149,7 @@ Return ONLY the JSON object, no other text.
                 messages.append(tool_msg)
 
             response = self.client.chat.completions.create(
-                model="moonshotai/Kimi-K2-Instruct",
+                model="NousResearch/Hermes-4-405B",
                 messages=messages,
                 tools=tools,
             )

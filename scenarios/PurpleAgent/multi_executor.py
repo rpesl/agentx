@@ -5,6 +5,7 @@ from openai.types.chat import ChatCompletionMessageParam, ChatCompletionSystemMe
 from openai.types.chat.chat_completion_message_tool_call_param import (
     ChatCompletionMessageToolCallParam,
     Function as ToolCallFunction)
+
 logger = logging.getLogger("MultiExecutor")
 
 
@@ -17,12 +18,13 @@ class MultiExecutor(SingleExecutor):
     """
 
     async def run_logic(self, task_description: str, context: dict) -> str:
+        """Overrides the base run_logic to implement a multi-step generation and validation process."""
         if context.get("mode") == "confirm":
             return await super().run_logic(task_description, context)
 
         logger.info("Planning API strategy...")
         plan = await self._plan_strategy(task_description, context)
-        
+
         logger.info("Generating code based on plan...")
         task_with_plan = f"{task_description}\n\n USE THIS STRATEGY: {plan}"
         initial_code = await super().run_logic(task_with_plan, context)
@@ -36,6 +38,7 @@ class MultiExecutor(SingleExecutor):
         return final_code
 
     async def _plan_strategy(self, task: str, context: dict) -> str:
+        """Before generating code, we ask the model to plan out which domains and services it will interact with based on the task."""
         instance_id = context.get("instance_id", 1)
         domains = await self._call_mcp_tool("list_available_domains", {"instance_id": instance_id})
 
@@ -49,12 +52,13 @@ class MultiExecutor(SingleExecutor):
         """
 
         response = self.client.chat.completions.create(
-            model="moonshotai/Kimi-K2-Instruct",
+            model="NousResearch/Hermes-4-405B",
             messages=[{"role": "user", "content": plan_prompt}]
         )
         return response.choices[0].message.content
 
     async def _validate_code(self, code: str, task: str, context: dict) -> str:
+        """The auditor agent will use tools to fetch real specs and compare them against the generated code."""
         logger.info("Validating generated endpoints against real specs...")
         instance_id = context.get("instance_id", 1)
         use_rag = (context.get("mode") == "rag")
@@ -83,7 +87,7 @@ class MultiExecutor(SingleExecutor):
         agent2_messages: list[ChatCompletionMessageParam] = [system_msg, user_msg]
 
         response = self.client.chat.completions.create(
-            model="moonshotai/Kimi-K2-Instruct",
+            model="NousResearch/Hermes-4-405B",
             messages=agent2_messages,
             tools=tools,
             tool_choice="auto"
@@ -128,7 +132,7 @@ class MultiExecutor(SingleExecutor):
                 agent2_messages.append(tool_msg_obj)
 
             response = self.client.chat.completions.create(
-                model="moonshotai/Kimi-K2-Instruct",
+                model="NousResearch/Hermes-4-405B",
                 messages=agent2_messages,
                 tools=tools
             )
@@ -138,10 +142,10 @@ class MultiExecutor(SingleExecutor):
         return report
 
     async def _final_refinement(self, initial_code: str, validation_report: str, task: str) -> str:
+        """Based on the auditor's report, we ask the model to make final corrections to the code."""
         logger.info("Applying final refinements based on auditor feedback:")
         logger.info("Initial code:\n" + initial_code)
         logger.info("Validation report:\n" + validation_report)
-
 
         refine_prompt = f"""
         Original Task: {task}
@@ -158,7 +162,7 @@ class MultiExecutor(SingleExecutor):
         """
 
         response = self.client.chat.completions.create(
-            model="moonshotai/Kimi-K2-Instruct",
+            model="NousResearch/Hermes-4-405B",
             messages=[{"role": "user", "content": refine_prompt}]
         )
         logger.info("Response from refinement step:\n" + response.choices[0].message.content)

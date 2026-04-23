@@ -13,14 +13,20 @@ from llama_index.core import load_index_from_storage
 
 logger = logging.getLogger("RAGRetriever")
 
+"""
+RAGRetriever is responsible for retrieving relevant OpenAPI specifications based on a natural language query.
+It uses a vector index to find the most relevant API endpoints and returns filtered OpenAPI specs containing those endpoints.
+"""
+
+
 class RAGRetriever:
     MAX_ENDPOINTS = 20
 
     def __init__(
-        self,
-        openapi_specs: List[str],
-        top_k: int = 5,
-        cache_dir: str = "data/rag_cache"
+            self,
+            openapi_specs: List[str],
+            top_k: int = 5,
+            cache_dir: str = "data/rag_cache"
     ):
         self.openapi_specs = openapi_specs
         self.top_k = top_k
@@ -35,6 +41,8 @@ class RAGRetriever:
             )
 
     def _build_spec_cache(self) -> Dict[int, Dict]:
+        """Pre-parse OpenAPI specs to extract titles, paths, and components for quick access during retrieval."""
+
         cache = {}
         for idx, spec_str in enumerate(self.openapi_specs):
             try:
@@ -52,6 +60,7 @@ class RAGRetriever:
         return cache
 
     def _create_index(self) -> VectorStoreIndex:
+        """Create a vector index from the OpenAPI specs, embedding the entire spec text for retrieval."""
         dimension = len(Settings.embed_model.get_text_embedding("test"))
         faiss_index = faiss.IndexFlatL2(dimension)
         vector_store = FaissVectorStore(faiss_index=faiss_index)
@@ -69,6 +78,8 @@ class RAGRetriever:
         )
 
     def _load_or_create_index(self, instance_id: str | int, domain_path: str) -> BaseIndex:
+        """Load the RAG index from cache if available, otherwise create a new index and cache it for future use."""
+
         if instance_id == "restbench":
             cache_path = self.cache_dir / "restbench" / domain_path.replace("/", "_")
         else:
@@ -93,8 +104,10 @@ class RAGRetriever:
         return index
 
     def _extract_endpoint_info(
-        self, node: NodeWithScore
+            self, node: NodeWithScore
     ) -> Tuple[int | None, str | None, str | None]:
+        """Extract the OpenAPI endpoint information (spec index, HTTP method, path) from a retrieved node."""
+
         metadata = getattr(node.node, "metadata", None)
         if not metadata:
             return None, None, None
@@ -113,6 +126,8 @@ class RAGRetriever:
         return None, None, None
 
     def retrieve(self, query: str, instance_id: str | int, domain_path: str) -> List[str]:
+        """Retrieve relevant OpenAPI specifications based on the natural language query. Returns a list of filtered spec strings."""
+
         if self.index is None:
             self.index = self._load_or_create_index(instance_id, domain_path)
 
@@ -170,10 +185,12 @@ class RAGRetriever:
         return result_specs
 
     def _create_filtered_spec(
-        self,
-        spec_idx: int,
-        matched_endpoints: List[Tuple[str, str, float]],
+            self,
+            spec_idx: int,
+            matched_endpoints: List[Tuple[str, str, float]],
     ) -> str | None:
+        """Create a filtered OpenAPI spec containing only the matched endpoints and their dependencies."""
+
         spec_cache = self._spec_cache[spec_idx]
         spec_obj = spec_cache["spec_obj"]
         paths = spec_cache["paths"]
@@ -218,6 +235,7 @@ class RAGRetriever:
         return json.dumps(minimized)
 
     def _extract_refs(self, data: Any, refs: Set[str]):
+        """Recursively extract all $ref values from the given data structure and add them to the refs set."""
         if isinstance(data, dict):
             for k, v in data.items():
                 if k == "$ref" and isinstance(v, str):
@@ -229,4 +247,5 @@ class RAGRetriever:
                 self._extract_refs(item, refs)
 
     def reset(self):
+        """Reset the RAG retriever by clearing the index from memory."""
         self.index = None

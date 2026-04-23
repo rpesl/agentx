@@ -15,9 +15,12 @@ COPY scenarios scenarios
 RUN --mount=type=cache,target=/home/agent/.cache/uv,uid=1000 \
     uv sync --locked
 
-# Expose port (default 9018)
-EXPOSE 9018
+# Expose common Purple agent ports
+EXPOSE 9018 9019
 
-# Command to start server
-ENTRYPOINT ["uv", "run", "scenarios/socbench/purple.py"]
+# Select which Purple mode to run: single | multi | orchestrator
+ENV PURPLE_AGENT_ROLE=orchestrator
+
+# Command to start selected Purple mode (host/port can be overridden via CMD)
+ENTRYPOINT ["sh", "-c", "case \"$PURPLE_AGENT_ROLE\" in single|single_executor) exec uv run scenarios/PurpleAgent/purple.py --type single \"$@\" ;; multi|multi_executor) exec uv run scenarios/PurpleAgent/purple.py --type multi \"$@\" ;; orchestrator|orchestrator_executor) exec uv run scenarios/PurpleAgent/purple_orchestrator.py \"$@\" ;; *) echo \"Invalid PURPLE_AGENT_ROLE: $PURPLE_AGENT_ROLE (expected: single|multi|orchestrator)\" >&2; exit 1 ;; esac", "purple-entrypoint"]
 CMD ["--host", "0.0.0.0", "--port", "9018"]

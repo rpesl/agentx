@@ -5,23 +5,15 @@ cmd = "python scenarios/GreenAgent/green.py --host 127.0.0.1 --port 9009"
 [[participants]]
 role = "PurpleAgent"
 endpoint = "http://127.0.0.1:9018"
-# cmd = "python scenarios/PurpleAgent/purple_orchestrator.py --host 127.0.0.1 --port 9018" # For orchestrator / multi-agent. Before running this command, make sure to start the coder and auditor agents first.
-cmd = "python scenarios/PurpleAgent/purple.py --host 127.0.0.1 --port 9018 --type single" # For single / multi-flow agent
+# Purple Agent mode options (activate exactly one cmd line):
+cmd = "python scenarios/PurpleAgent/purple.py --host 127.0.0.1 --port 9018 --type single" # single mode
+# cmd = "python scenarios/PurpleAgent/purple.py --host 127.0.0.1 --port 9018 --type multi" # multi mode
+# cmd = "python scenarios/PurpleAgent/purple_orchestrator.py --host 127.0.0.1 --port 9018" # orchestrator mode
+# For orchestrator mode, first start in separate terminals:
+# python scenarios/PurpleAgent/auditor_agent.py --host 127.0.0.1 --port 9020
+# python scenarios/PurpleAgent/coder_agent.py --host 127.0.0.1 --port 9019
 [config]
 
-# For single agent, we received following results:
-# - Precision: 0.36
-# - Recall: 0.37
-# - F1 Score: 0.37
-#
-# For multi-flow agent, we received following results:
-# - Precision: 0.49
-# - Recall: 0.49
-# - F1 Score: 0.49
-#
-# For orchestrator / multi-agent, we received following results:
-# - Precision: 0.39
-# - Recall: 0.35
-# - F1 Score: 0.36
-
 num_rounds = 1
+pass_at_k_n = 10
+pass_at_k_k = 1

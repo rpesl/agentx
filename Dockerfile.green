@@ -19,5 +19,5 @@ RUN --mount=type=cache,target=/home/agent/.cache/uv,uid=1000 \
 EXPOSE 9009
 
 # Command to start server (host/port can be overridden)
-ENTRYPOINT ["uv", "run", "scenarios/socbench/green.py"]
+ENTRYPOINT ["uv", "run", "scenarios/GreenAgent/green.py"]
 CMD ["--host", "0.0.0.0", "--port", "9009"]

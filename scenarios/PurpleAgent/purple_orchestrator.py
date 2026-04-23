@@ -6,6 +6,7 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCard, AgentCapabilities, AgentSkill
 
+
 def make_agent_card(name: str, url: str) -> AgentCard:
     skill = AgentSkill(
         id=f"{name.lower()}_task",
@@ -30,7 +31,9 @@ def make_agent_card(name: str, url: str) -> AgentCard:
         skills=[skill],
     )
 
+
 load_dotenv()
+
 
 async def main():
     parser = argparse.ArgumentParser()
@@ -45,6 +48,7 @@ async def main():
 
     config = uvicorn.Config(server.build(), host=args.host, port=args.port)
     await uvicorn.Server(config).serve()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

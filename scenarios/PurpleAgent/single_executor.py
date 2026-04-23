@@ -17,8 +17,14 @@ logger = logging.getLogger("SingleExecutor")
 
 
 class SingleExecutor(BaseExecutor):
+    """
+    A straightforward executor that:
+    In "confirm" mode: directly asks the model to confirm if the generated endpoints match the task.
+    In "code" mode: generates code using MCP tools with a simple workflow and returns the final code without any iterative validation or refinement.
+    """
 
     async def run_logic(self, task_description: str, context: dict) -> str:
+        """Main entry point for the single executor."""
         mode = context.get("mode", "")
         instance_id = context.get("instance_id", 1)
         if mode == "confirm":
@@ -30,6 +36,7 @@ class SingleExecutor(BaseExecutor):
             return await self.generate_code_with_mcp(task_description, instance_id, use_rag)
 
     async def generate_confirmation(self, prompt: str) -> str:
+        """A simple confirmation step that asks the model to evaluate if the generated endpoints match the user's intent."""
         system_msg: ChatCompletionSystemMessageParam = {
             "role": "system",
             "content": (
@@ -44,13 +51,13 @@ class SingleExecutor(BaseExecutor):
         }
 
         response = self.client.chat.completions.create(
-            model="moonshotai/Kimi-K2-Instruct",
+            model="NousResearch/Hermes-4-405B",
             messages=[system_msg, user_msg],
         )
         return self.clean_text(response.choices[0].message.content.strip())
 
     async def generate_code_with_mcp(self, prompt: str, instance_id: int, use_rag: bool = False) -> str:
-
+        """Generates Python code using MCP tools based on the provided prompt and instance context."""
         if use_rag:
             instruction = f"You have access to MCP tools INCLUDING RAG. ONLY use domains from instance {instance_id}."
         else:
@@ -80,7 +87,7 @@ WORKFLOW:
         messages: list[ChatCompletionMessageParam] = [system_msg, user_msg]
 
         response = self.client.chat.completions.create(
-            model="moonshotai/Kimi-K2-Instruct",
+            model="NousResearch/Hermes-4-405B",
             messages=messages,
             tools=tools,
             tool_choice="auto"
@@ -105,7 +112,8 @@ WORKFLOW:
             }
             messages.append(assistant_msg)
             for tool_call in assistant_message.tool_calls:
-                tool_result = await self._call_mcp_tool(tool_call.function.name, json.loads(tool_call.function.arguments))
+                tool_result = await self._call_mcp_tool(tool_call.function.name,
+                                                        json.loads(tool_call.function.arguments))
                 if isinstance(tool_result, str):
                     result_str = tool_result
                 else:
@@ -118,7 +126,7 @@ WORKFLOW:
                 messages.append(tool_msg)
 
             response = self.client.chat.completions.create(
-                model="moonshotai/Kimi-K2-Instruct",
+                model="NousResearch/Hermes-4-405B",
                 messages=messages,
                 tools=tools
             )

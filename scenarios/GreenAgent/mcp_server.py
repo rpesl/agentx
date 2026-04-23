@@ -9,7 +9,11 @@ mcp = FastMCP(name="SOCBench Tools", json_response=True)
 BENCHMARK_ROOT = Path("scenarios/GreenAgent/benchmark")
 RESTBENCH_ROOT = Path("scenarios/GreenAgent/benchmark/restbench/data/specs")
 
+"""MCP Server for SOCBench-D and RestBench OpenAPI retrieval."""
+
+
 def _initialize_embedding_model():
+    """Initialize the embedding model once at startup."""
     try:
         Settings.embed_model = HuggingFaceEmbedding(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
@@ -18,7 +22,9 @@ def _initialize_embedding_model():
     except Exception:
         raise
 
+
 _initialize_embedding_model()
+
 
 @mcp.tool()
 def list_available_domains(instance_id: str | int = None) -> list[dict]:
@@ -160,4 +166,3 @@ def retrieve_relevant_specs_with_rag(domain_path: str, query: str) -> list[dict]
 
 if __name__ == "__main__":
     mcp.run(transport="sse")
-

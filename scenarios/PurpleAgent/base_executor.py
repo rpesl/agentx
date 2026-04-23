@@ -13,7 +13,15 @@ from agentbeats.tool_provider import ToolProvider
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("BaseExecutor")
 
+
 class BaseExecutor(AgentExecutor):
+    """
+    Base executor for Purple Agent scenarios. Provides common utilities for:
+    - Managing MCP connections and tool calls
+    - Calling other agents in a modular way
+    - Extracting structured context from messages
+    - Cleaning and processing generated code or text
+    """
 
     def __init__(self, api_key_env: str = "NEBIUS_API_KEY"):
         self.api_key = os.getenv(api_key_env)
@@ -31,6 +39,7 @@ class BaseExecutor(AgentExecutor):
         self._tool_provider = ToolProvider()
 
     async def call_other_purple_agent(self, agent_url: str, message: str, context: dict | None = None) -> str:
+        """Utility to call another agent in the Purple Agent ecosystem. Automatically formats the message with context if provided."""
         full_message = message
         if context:
             full_message = f"{message}\n\n[Context: {json.dumps(context)}]"
@@ -43,6 +52,7 @@ class BaseExecutor(AgentExecutor):
         )
 
     async def _ensure_mcp_connected(self):
+        """Ensures that we have an active MCP session."""
         if self.mcp_initialized:
             logging.info("MCP session already initialized")
             return
@@ -67,6 +77,7 @@ class BaseExecutor(AgentExecutor):
             raise
 
     async def _cleanup_mcp(self):
+        """Cleans up MCP session and SSE connection."""
         if self._session_context is not None:
             try:
                 await self._session_context.__aexit__(None, None, None)
@@ -85,6 +96,7 @@ class BaseExecutor(AgentExecutor):
         self.mcp_initialized = False
 
     async def _call_mcp_tool(self, tool_name: str, arguments: dict):
+        """Calls a tool via MCP and returns the result."""
         await self._ensure_mcp_connected()
 
         try:
@@ -99,6 +111,7 @@ class BaseExecutor(AgentExecutor):
             return {"error": str(e)}
 
     async def _list_mcp_tools(self, use_rag: bool = False) -> list[ChatCompletionToolParam]:
+        """Lists available tools from MCP and formats them for OpenAI function calling."""
         await self._ensure_mcp_connected()
 
         tools_list = await self.mcp_session.list_tools()
@@ -111,9 +124,9 @@ class BaseExecutor(AgentExecutor):
             openai_tool: ChatCompletionToolParam = {
                 "type": "function",
                 "function": FunctionDefinition(
-                     name=tool.name,
-                     description=tool.description or "",
-                     parameters=tool.inputSchema
+                    name=tool.name,
+                    description=tool.description or "",
+                    parameters=tool.inputSchema
                 )
             }
             openai_tools.append(openai_tool)
@@ -123,6 +136,7 @@ class BaseExecutor(AgentExecutor):
 
     @staticmethod
     def extract_context(message: str) -> tuple[str, dict | None]:
+        """Extracts structured context from a message if present."""
         match = re.search(r'\[Context:\s*(\{.*?})]', message, re.DOTALL)
 
         if match:
@@ -137,6 +151,7 @@ class BaseExecutor(AgentExecutor):
 
     @staticmethod
     def clean_generated_code(text: str) -> str:
+        """Cleans generated code by extracting code blocks and removing comments."""
         text = text.encode("ascii", "ignore").decode()
         code_blocks = re.findall(r"```(?:[\w+-]*)?\n(.*?)```", text, re.DOTALL)
         if code_blocks:
@@ -154,14 +169,17 @@ class BaseExecutor(AgentExecutor):
 
     @staticmethod
     def clean_text(text: str) -> str:
+        """Cleans text by removing non-ASCII characters and extra whitespace."""
         result = text.encode("ascii", "ignore").decode().strip()
         return result
 
     @abstractmethod
     async def run_logic(self, task_description: str, context: dict) -> str:
+        """Abstract method to be implemented by child executors with the specific logic for the task."""
         pass
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        """Main execution method called by the agent framework."""
         request_text = context.get_user_input()
         task_description, json_context = self.extract_context(request_text)
 

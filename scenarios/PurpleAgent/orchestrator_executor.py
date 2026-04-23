@@ -1,10 +1,12 @@
 import json, logging, os, sys
+
 root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if root_path not in sys.path:
     sys.path.append(root_path)
 from scenarios.PurpleAgent.base_executor import BaseExecutor
 from scenarios.GreenAgent.endpoint_evaluator import normalize_endpoint
 from scenarios.GreenAgent.socbenchsc.src.socbenchsc import Analysis
+
 logger = logging.getLogger("OrchestratorExecutor")
 
 
@@ -22,6 +24,7 @@ class OrchestratorExecutor(BaseExecutor):
     MAX_REFINEMENT_ROUNDS: int = 3
 
     async def run_logic(self, task_description: str, context: dict) -> str:
+        """Main entry point for the orchestrator executor."""
         mode = context.get("mode", "code")
 
         if mode == "confirm":
@@ -31,11 +34,12 @@ class OrchestratorExecutor(BaseExecutor):
         return await self._orchestrate(task_description, context)
 
     async def _orchestrate(self, task_description: str, context: dict) -> str:
-        coder_url   = os.getenv("CODER_AGENT_URL",   "http://127.0.0.1:9019")
+        """Core orchestration logic that manages the iterative code generation and auditing process."""
+        coder_url = os.getenv("CODER_AGENT_URL", "http://127.0.0.1:9019")
         auditor_url = os.getenv("AUDITOR_AGENT_URL", "http://127.0.0.1:9020")
 
-        best_code            = ""
-        best_endpoint_count  = -1
+        best_code = ""
+        best_endpoint_count = -1
 
         logger.info("Step 1 – Initial code generation")
         current_code = await self._ask_coder(task_description, context)
@@ -56,8 +60,12 @@ class OrchestratorExecutor(BaseExecutor):
             audit_report_raw = await self.call_other_purple_agent(
                 agent_url=auditor_url,
                 message=(
-                    f"Audit this code for the task:\n{task_description}\n\n"
-                    f"CODE:\n{current_code}"
+                    f"Task: {task_description}\n"
+                    f"Code: {current_code}\n\n"
+                    "INSTRUCTION: \n"
+                    "1. List ALL domains relevant to this task.\n"
+                    "2. For each domain, find ALL endpoints that are NECESSARY to fulfill the task requirements.\n"
+                    "3. Compare these to the code and explicitly list every NECESSARY but MISSING endpoint."
                 ),
                 context=audit_context,
             )
@@ -89,13 +97,13 @@ class OrchestratorExecutor(BaseExecutor):
                 break
 
             current_code = refined_code
-            ep_count     = new_ep_count
+            ep_count = new_ep_count
 
         logger.info(f"Final best endpoint count: {best_endpoint_count}")
         return best_code
 
-
     async def _ask_coder(self, message: str, context: dict) -> str:
+        """Sends the original task to the CoderAgent for code generation."""
         coder_url = os.getenv("CODER_AGENT_URL", "http://127.0.0.1:9019")
         return await self.call_other_purple_agent(
             agent_url=coder_url,
@@ -103,33 +111,31 @@ class OrchestratorExecutor(BaseExecutor):
             context=context,
         )
 
-
     async def _refine_with_coder(
-        self,
-        coder_url: str,
-        task_description: str,
-        original_code: str,
-        audit: dict,
-        context: dict,
+            self,
+            coder_url: str,
+            task_description: str,
+            original_code: str,
+            audit: dict,
+            context: dict,
     ) -> str:
-        wrong_lines   = "\n".join(
+        """Constructs a detailed refinement prompt for the CoderAgent based on the audit results, asking it to correct mistakes and add missing endpoints."""
+        wrong_lines = "\n".join(
             f"  - Used '{w['used']}' → should be '{w['correct']}': {w['reason']}"
             for w in audit["wrong"]
         ) or "  (none)"
         missing_lines = "\n".join(f"  - {m}" for m in audit["missing"]) or "  (none)"
 
         refinement_message = (
-            f"Fix this Python code based on the auditor's findings.\n\n"
-            f"TASK:\n{task_description}\n\n"
-            f"ORIGINAL CODE:\n```python\n{original_code}\n```\n\n"
-            f"AUDIT FINDINGS:\n"
-            f"Wrong endpoints:\n{wrong_lines}\n"
-            f"Missing endpoints:\n{missing_lines}\n\n"
-            f"Instructions:\n"
-            f"- Correct every wrong endpoint (path + method)\n"
-            f"- Add every missing endpoint with a sensible call\n"
-            f"- Keep all confirmed endpoints as-is\n"
-            f"- Return ONLY the fixed Python code"
+            f"The current code is incomplete or incorrect. To achieve 100% recall, you MUST include these endpoints:\n\n"
+            f"MISSING/REQUIRED:\n{missing_lines}\n"
+            f"CORRECTIONS:\n{wrong_lines}\n\n"
+            f"TASK CONTEXT:\n{task_description}\n\n"
+            f"ORIGINAL CODE:\n{original_code}\n\n"
+            f"FINAL INSTRUCTION:\n"
+            f"- Use exactly the paths and methods listed above.\n"
+            f"- Ensure the logic follows the complete workflow described in the task.\n"
+            f"- Return ONLY the improved Python code."
         )
 
         return await self.call_other_purple_agent(
@@ -138,9 +144,9 @@ class OrchestratorExecutor(BaseExecutor):
             context={**context, "mode": context.get("mode", "code")},
         )
 
-
     @staticmethod
     def _parse_audit(raw: str) -> dict:
+        """Parses the auditor's response, which should be a JSON string containing 'confirmed', 'wrong', and 'missing' endpoint lists, along with a summary."""
         template = {"confirmed": [], "wrong": [], "missing": [], "summary": ""}
         if not raw:
             return template
@@ -151,10 +157,9 @@ class OrchestratorExecutor(BaseExecutor):
             logger.warning("Could not parse audit JSON – treating as no issues")
             return {**template, "summary": raw[:200]}
 
-
-
     @staticmethod
     def _count_endpoints(code: str) -> int:
+        """Counts the number of API endpoints used in the code by extracting them and normalizing for comparison."""
         if not code:
             return 0
         try:

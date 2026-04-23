@@ -25,7 +25,7 @@ def make_agent_card(name: str, url: str) -> AgentCard:
 
     return AgentCard(
         name=name,
-        description=f"{name} — MCP-backed API endpoint auditor.",
+        description=f"{name} - MCP-backed API endpoint auditor.",
         url=url,
         version="1.0.0",
         default_input_modes=["text"],

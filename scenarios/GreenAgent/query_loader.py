@@ -2,6 +2,13 @@ import json
 from pathlib import Path
 from typing import List, Tuple
 
+"""
+This module provides query loaders for the SOCBench and RestBench benchmarks. 
+The SOCBenchQueryLoader class loads queries from the SOCBench dataset, while the RestBenchQueryLoader class loads queries from the RestBench dataset. 
+Both classes implement caching to optimize query loading and provide methods to retrieve the next query for evaluation.
+"""
+
+
 class SOCBenchQueryLoader:
     def __init__(self, benchmark_root: str):
         self.benchmark_root = Path(benchmark_root)
@@ -17,6 +24,7 @@ class SOCBenchQueryLoader:
         self.instances = list(range(1, 6))
 
     def load_query(self, domain_path: Path) -> Tuple[str, List[str], int]:
+        """Loads a query from the specified domain path. Caches queries to optimize loading."""
         domain_path_str = str(domain_path.as_posix())
         if domain_path_str not in self.queries_cache:
             query_file = domain_path / "queries.json"
@@ -32,6 +40,7 @@ class SOCBenchQueryLoader:
         return query["query"], query["endpoints"], instance_id
 
     def get_next_domain(self) -> Path:
+        """Returns the path to the next domain for evaluation. Cycles through domains and instances."""
         domain_name = self.domains[self.domain_idx % len(self.domains)]
         instance_id = self.instances[self.instance_idx % len(self.instances)]
         self.domain_idx += 1
@@ -40,6 +49,7 @@ class SOCBenchQueryLoader:
         domain_path = self.benchmark_root / f"socbenchd_{instance_id}" / domain_name
 
         return domain_path
+
 
 class RestBenchQueryLoader:
     def __init__(self, restbench_root: str):
@@ -53,6 +63,7 @@ class RestBenchQueryLoader:
         self.cache = {}
 
     def load_query(self) -> Tuple[str, List[str]]:
+        """Loads a query from the RestBench dataset. Caches queries to optimize loading."""
         file_path = self.files[self.file_idx % len(self.files)]
         self.file_idx += 1
 

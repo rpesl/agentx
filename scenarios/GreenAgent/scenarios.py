@@ -8,6 +8,12 @@ from a2a.utils import new_agent_text_message
 from socbenchsc.src.socbenchsc import Analysis
 from endpoint_evaluator import normalize_endpoint
 
+"""
+The ScenarioRunner class manages the execution of different code generation scenarios for the GreenAgent. 
+It handles the interaction with the agent, including sending prompts, receiving generated code, extracting API endpoints,
+and requesting confirmation when needed. 
+"""
+
 
 @dataclass
 class ScenarioConfig:
@@ -29,6 +35,7 @@ class ScenarioRunner:
             scenario: str,
             msg: str
     ) -> None:
+        """Helper method to log messages to the TaskUpdater with a consistent format."""
         await updater.update_status(
             TaskState.working,
             new_agent_text_message(f"[{role}][{scenario}] {msg}")
@@ -36,6 +43,7 @@ class ScenarioRunner:
 
     @staticmethod
     def extract_endpoints(code: str) -> set[str]:
+        """Use static analysis to extract API endpoints from the generated code."""
         try:
             analysis = Analysis(code)
             retrieved = analysis.perform_analysis()
@@ -45,6 +53,7 @@ class ScenarioRunner:
 
     @staticmethod
     def confirmation_is_positive(text: str) -> bool:
+        """Determine if the confirmation response indicates acceptance."""
         text = text.lower().strip()
         return text.startswith("yes") or text.startswith("**yes**") or text.startswith("'yes'")
 
@@ -54,6 +63,7 @@ class ScenarioRunner:
             task_description: str,
             context: dict | None = None
     ) -> str:
+        """Send a code generation request to the agent with the given task description and optional context."""
         message = task_description
         if context:
             message = f"{task_description}\n\n[Context: {json.dumps(context)}]"
@@ -71,6 +81,8 @@ class ScenarioRunner:
             extracted: set[str],
             context: dict | None = None
     ) -> str:
+        """Send a confirmation request to the agent, asking if the extracted endpoints match the user's intent based on the original query."""
+
         task_description = f"""
 You generated code for this task:
 {query_text}
@@ -91,6 +103,7 @@ Respond with 'Yes' or 'No' followed by a brief explanation.
 
     @staticmethod
     def _easy_prompt(*, expected_endpoints: list[str], query_text: str, **_) -> str:
+        """Build the prompt for the easy scenario, which provides explicit expected endpoints to guide the code generation."""
         return f"""
 Generate Python code to accomplish the following task:
 
@@ -109,6 +122,7 @@ Note: You may use any available tools or resources to discover API specification
 
     @staticmethod
     def _task_prompt(*, query_text: str, **_) -> str:
+        """Build the prompt for the medium and hard scenarios, which do not provide explicit expected endpoints and require the agent to discover relevant APIs on its own."""
         return f"""
 Generate Python code to accomplish the following task:
 
@@ -124,6 +138,7 @@ Note: You may use any available tools or resources to discover API specification
 
     @staticmethod
     def _rag_prompt(*, query_text: str, expected_endpoints: list[str] | None = None, **_) -> str:
+        """Build the prompt for the RAG scenarios, which may optionally provide expected endpoints but primarily rely on the agent's ability to perform semantic search and retrieval of relevant API specifications."""
         base = f"""
 Generate Python code to accomplish the following task:
 
@@ -146,6 +161,7 @@ Your code should use these API endpoints:
 
     @staticmethod
     def _restbench_prompt(*, expected_endpoints: list[str], query_text: str, **_) -> str:
+        """Build the prompt for the RestBench scenario, which is designed to evaluate the agent's ability to generate code that uses specific API endpoints from either Spotify or TMDB, without providing additional guidance on how to discover those endpoints."""
         return f"""
 Generate Python code to accomplish the following task:
 
@@ -171,6 +187,9 @@ Requirements:
             instance_id: str | int,
             mode: str = "code"
     ) -> str:
+        """
+        Core logic for running a scenario with multiple attempts, endpoint extraction, and optional confirmation.
+        """
 
         best_code = ""
         best_endpoint_count = -1
@@ -268,7 +287,6 @@ Requirements:
 
         return best_code
 
-
     async def run_easy(
             self,
             role: str,
@@ -278,6 +296,7 @@ Requirements:
             updater: TaskUpdater,
             instance_id: int
     ) -> str:
+
         config = ScenarioConfig(
             level="easy",
             max_attempts=3,
@@ -295,6 +314,7 @@ Requirements:
             updater: TaskUpdater,
             instance_id: int
     ) -> str:
+
         config = ScenarioConfig(
             level="medium",
             max_attempts=3,
@@ -311,6 +331,7 @@ Requirements:
             updater: TaskUpdater,
             instance_id: int
     ) -> str:
+
         config = ScenarioConfig(
             level="hard",
             max_attempts=1,
@@ -328,6 +349,7 @@ Requirements:
             updater: TaskUpdater,
             instance_id: int
     ) -> str:
+
         config = ScenarioConfig(
             level="rag_easy",
             max_attempts=3,
@@ -345,6 +367,7 @@ Requirements:
             updater: TaskUpdater,
             instance_id: int
     ) -> str:
+
         config = ScenarioConfig(
             level="rag_medium",
             max_attempts=3,
@@ -361,6 +384,7 @@ Requirements:
             updater: TaskUpdater,
             instance_id: int
     ) -> str:
+
         config = ScenarioConfig(
             level="rag_hard",
             max_attempts=1,
@@ -377,6 +401,7 @@ Requirements:
             agent_url: str,
             updater: TaskUpdater
     ) -> str:
+
         config = ScenarioConfig(
             level="restbench",
             max_attempts=3,

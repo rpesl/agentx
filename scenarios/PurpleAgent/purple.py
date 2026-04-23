@@ -15,6 +15,7 @@ from multi_executor import MultiExecutor
 
 load_dotenv()
 
+
 def create_agent_card(agent_url: str) -> AgentCard:
     skill = AgentSkill(
         id='generate_code',
